@@ -274,3 +274,9 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 @media (max-width: 520px) {
   .stats { grid-template-columns: 1fr; }
 }
+
+/* Firmware: formulário de envio */
+.fw-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; }
+.fw-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.fw-form input { width: 100%; }
+@media (max-width: 860px) { .fw-form { grid-template-columns: 1fr; } }

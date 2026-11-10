@@ -70,4 +70,7 @@ module.exports = {
   async list(collection) {
     return (await request(`/${collection}/`)).data || [];
   },
+  async deleteFile(name) {
+    return request(`/files/${enc(name)}`, { method: "DELETE" });
+  },
 };

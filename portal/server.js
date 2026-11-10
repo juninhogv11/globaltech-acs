@@ -9,6 +9,7 @@ const lan = require("./lib/lan");
 const speedtest = require("./lib/speedtest");
 const models = require("./lib/models");
 const wifibackup = require("./lib/wifibackup");
+const firmware = require("./lib/firmware");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
 const WIFI_BACKUP_ALLOW = (process.env.WIFI_BACKUP_ALLOW || "192.168.10.2").split(",").map((s) => s.trim());
@@ -74,6 +75,7 @@ api.get("/api/devices/:id", async (req, res) => {
     modelImage: models.imageUrl(device.model),
     lan: lan.lanInfo(doc),
     speedtest: { ...speedtest.info(doc), running: speedtest.runningJob(req.params.id) },
+    firmwareJob: { ...(firmware.history(req.params.id) || {}), lockMinutes: firmware.lockMinutes(req.params.id) },
     root: devices.rootOf(doc),
   });
 });
@@ -173,6 +175,42 @@ api.post("/api/devices/:id/wifi", async (req, res) => {
   res.json(taskResult(r));
 });
 
+// ---------- Firmware (arquivos por modelo no GenieACS e atualização do equipamento) ----------
+api.get("/api/firmware", async (req, res) => {
+  const [files, list] = await Promise.all([firmware.list(), devices.all()]);
+  res.json({
+    files,
+    models: [...new Set(list.map((d) => d.model).filter(Boolean))].sort(),
+    maxMb: firmware.MAX_BYTES / 1048576,
+  });
+});
+
+// Corpo binário (o arquivo); modelo, versão e nome vêm na URL
+api.post("/api/firmware/upload", async (req, res) => {
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const r = await firmware.upload(req, { model: q.get("model"), version: q.get("version"), filename: q.get("filename") });
+  console.log(new Date().toISOString(), `firmware enviado ${r.name} (${Math.round(r.size / 1048576)} MB) por ${req.user.user}`);
+  res.json(r);
+});
+
+api.delete("/api/firmware/:name", async (req, res) => {
+  await firmware.remove(req.params.name);
+  console.log(new Date().toISOString(), `firmware apagado ${req.params.name} por ${req.user.user}`);
+  res.json({ ok: true });
+});
+
+api.post("/api/devices/:id/firmware", async (req, res) => {
+  const d = devices.normalize(await nbi.device(req.params.id));
+  if (!d.online) return res.status(409).json({ error: "O equipamento está offline. Atualize só com ele online." });
+  const { file, task } = await firmware.upgradeTask(d, (req.body || {}).file);
+  const r = await nbi.task(req.params.id, task, 20000);
+  devices.invalidate();
+  firmware.record(req.params.id, { status: "enviado", at: new Date().toISOString(), user: req.user.user, file: file.name, from: d.software, to: file.version, code: null, message: "", result: null });
+  setTimeout(() => firmware.watch(), 15000);
+  console.log(new Date().toISOString(), `atualizacao de firmware ${file.name} enviada para ${req.params.id} (era ${d.software}) por ${req.user.user}`);
+  res.json({ ...taskResult(r), from: d.software, to: file.version, file: file.name });
+});
+
 // Foto do modelo: arquivo (dataUrl, já reduzido no navegador) ou URL externa
 api.get("/api/models/:model/image", async (req, res) => {
   const file = models.filePath(req.params.model);
@@ -244,6 +282,9 @@ api.post("/api/devices/:id/refresh", async (req, res) => {
 });
 
 api.post("/api/devices/:id/reboot", async (req, res) => {
+  // Reiniciar no meio da gravação do firmware pode deixar o equipamento sem funcionar
+  const lock = firmware.lockMinutes(req.params.id);
+  if (lock) return res.status(409).json({ error: `Atualização de firmware em andamento. Aguarde ${lock} min antes de reiniciar.` });
   const r = await nbi.task(req.params.id, { name: "reboot" });
   devices.invalidate();
   res.json(taskResult(r));

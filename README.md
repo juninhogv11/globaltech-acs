@@ -5,7 +5,8 @@ equipamentos dos clientes (TP-Link XX530v, roteadores TR-098 e MikroTik).
 
 - **Portal web**: dashboard, dispositivos, sinal óptico (PON), Wi-Fi e clientes conectados,
   portas LAN, verificação de interferência com troca de canal, teste de velocidade (TR-143),
-  alteração de Wi-Fi, falhas, provisions/presets (consulta) e código do cliente no SGP.
+  alteração de Wi-Fi, atualização de firmware (arquivos por modelo, sem repetição automática),
+  falhas, provisions/presets (consulta) e código do cliente no SGP.
 - **GenieACS**: provisions, presets, virtual parameters e extensões
   (integração com o SGP e restauração de Wi-Fi após reset de fábrica).
 
@@ -79,6 +80,15 @@ node deploy-acs.js --install-ext          # backup do servidor + publica + copia
 chown genieacs:genieacs /opt/genieacs/ext/*
 systemctl restart genieacs-cwmp
 ```
+
+Para a atualização de firmware pelo portal, o GenieACS precisa informar aos roteadores um
+endereço de download que eles consigam acessar. Em `/opt/genieacs/genieacs.env`:
+
+```bash
+GENIEACS_FS_HOSTNAME=acs.exemplo.com.br   # mesmo nome que os roteadores usam para o ACS
+```
+
+e depois `systemctl restart genieacs-cwmp`. Os arquivos são baixados pela porta 7567.
 
 O `deploy-acs.js` guarda um backup da configuração atual em `acs/backups/<data>/`
 antes de gravar e se recusa a publicar se faltar alguma variável em `acs.env`.

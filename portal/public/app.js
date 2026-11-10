@@ -566,7 +566,7 @@ function bindModelPhoto(model) {
 }
 
 async function pageDevice(id) {
-  const { device: d, lan, speedtest: st, root, modelImage } = await api("/devices/" + enc(id));
+  const { device: d, lan, speedtest: st, root, modelImage, firmwareJob: fj } = await api("/devices/" + enc(id));
   $("#page-title").textContent = d.ssid || d.serial;
   view.innerHTML = `
     <div class="page-head">
@@ -574,7 +574,7 @@ async function pageDevice(id) {
       <div class="toolbar" style="margin:0">
         <button class="btn" data-act="refresh">Atualizar agora</button>
         <button class="btn" data-act="reprovision">Reprovisionar</button>
-        <button class="btn danger" data-act="reboot">Reiniciar</button>
+        <button class="btn danger" data-act="reboot" ${fj.lockMinutes ? `disabled title="Atualização de firmware em andamento: aguarde ${fj.lockMinutes} min"` : ""}>Reiniciar</button>
       </div>
     </div>
     <div class="card device-main">
@@ -604,7 +604,9 @@ async function pageDevice(id) {
         <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `<b class="client-id">${esc(d.sgpCliente)}</b>${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
         <dt>Serial</dt><dd>${esc(d.serial)}</dd>
         <dt>Fabricante / modelo</dt><dd>${esc(d.manufacturer)} ${esc(d.model)}</dd>
-        <dt>Firmware</dt><dd>${esc(d.software || "—")}</dd>
+        <dt>Firmware</dt><dd>${esc(d.software || "—")}
+          ${d.online ? `<button class="btn sm" id="fw-upgrade" style="margin-left:8px">Atualizar firmware</button>` : ""}
+          ${fwJobLine(fj)}</dd>
         <dt>MAC</dt><dd><code>${esc(d.mac || "—")}</code></dd>
         <dt>IP WAN</dt><dd>${esc(d.wanIp || "—")}</dd>
         <dt>IP LAN</dt><dd>${esc(d.lanIp || "—")}</dd>
@@ -698,6 +700,7 @@ async function pageDevice(id) {
 
   bindModelPhoto(d.model);
   bindWifiEdit(id);
+  bindFirmwareUpgrade(id, d);
 
   const showAll = $("#hosts-all");
   if (showAll) showAll.addEventListener("change", () => {
@@ -721,6 +724,122 @@ async function pageDevice(id) {
       route(true);
     } catch (ex) { toast(ex.message, true); }
   });
+}
+
+// ---------- Firmware: arquivos por modelo e atualização ----------
+const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB");
+
+// Envia o arquivo com barra de progresso no quadro central
+function uploadFirmware(file, model, version) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const qs = new URLSearchParams({ model, version, filename: file.name });
+    xhr.open("POST", "/api/firmware/upload?" + qs);
+    xhr.setRequestHeader("X-Requested-With", "portal");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    showLoading("Enviando firmware… 0%");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) $("#overlay-msg").textContent = `Enviando firmware… ${Math.round((e.loaded / e.total) * 100)}%`;
+    };
+    xhr.onload = () => {
+      hideLoading();
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status === 401) { location.href = "/login.html"; return; }
+      xhr.status < 300 ? resolve(data) : reject(new Error(data.error || "Falha no envio (HTTP " + xhr.status + ")"));
+    };
+    xhr.onerror = () => { hideLoading(); reject(new Error("Falha de conexão no envio")); };
+    xhr.send(file);
+  });
+}
+
+async function pageFirmware() {
+  const { files, models, maxMb } = await api("/firmware");
+  const folders = {};
+  for (const m of models) folders[m] = [];
+  for (const f of files) (folders[f.model] = folders[f.model] || []).push(f);
+  view.innerHTML = `
+    <div class="page-head"><h1>Firmware</h1><span class="muted">${files.length} arquivo(s) no servidor do GenieACS</span></div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>Enviar firmware</h2>
+      <form id="fw-form" class="fw-form">
+        <label>Modelo (pasta)
+          <input id="fw-model" list="fw-models" required placeholder="ex.: XX530v" value="${esc(models[0] || "")}">
+          <datalist id="fw-models">${models.map((m) => `<option value="${esc(m)}">`).join("")}</datalist></label>
+        <label>Versão<input id="fw-version" required placeholder="ex.: 0.5.0 Build 251104"></label>
+        <label>Arquivo (até ${maxMb} MB)<input id="fw-file" type="file" required accept=".bin,.img,.w,.fw,.tar,.gz,.zip"></label>
+        <button class="btn primary" type="submit">Enviar</button>
+      </form>
+      <p class="muted" style="margin:10px 0 0">Use só o firmware oficial do fabricante para esse modelo. O modelo precisa ser igual ao do equipamento (coluna "Modelo" em Dispositivos).</p>
+    </div>
+    ${Object.keys(folders).sort().map((m) => `
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-head"><h2>📁 ${esc(m)}</h2><span class="muted">${folders[m].length} arquivo(s)</span></div>
+        ${folders[m].length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Arquivo</th><th>Versão</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead>
+          <tbody>${folders[m].map((f) => `<tr>
+            <td><code>${esc(f.name.replace(/^[^/]*\//, ""))}</code></td><td>${esc(f.version || "—")}</td>
+            <td>${fmtSize(f.size)}</td><td title="${esc(fmtDate(f.uploadedAt))}">${timeAgo(f.uploadedAt)}</td>
+            <td><button class="btn sm danger" data-fw-del="${esc(f.name)}">Apagar</button></td></tr>`).join("")}</tbody>
+        </table></div>` : `<div class="empty">Nenhum firmware para este modelo.</div>`}
+      </div>`).join("")}`;
+
+  $("#fw-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = $("#fw-file").files[0];
+    if (!file) return;
+    if (file.size > maxMb * 1048576) return toast(`Arquivo maior que ${maxMb} MB.`, true);
+    try {
+      await uploadFirmware(file, $("#fw-model").value.trim(), $("#fw-version").value.trim());
+      toast("Firmware enviado ao servidor.");
+      route(true);
+    } catch (ex) { toast(ex.message, true); }
+  });
+  view.querySelectorAll("[data-fw-del]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Apagar o firmware ${b.dataset.fwDel} do servidor?`)) return;
+    try {
+      await api("/firmware/" + enc(b.dataset.fwDel), { method: "DELETE", loading: "Apagando firmware…" });
+      toast("Firmware apagado.");
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  }));
+}
+
+// Botão "Atualizar firmware" na página do dispositivo
+function bindFirmwareUpgrade(id, d) {
+  const btn = $("#fw-upgrade");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    let files;
+    try { files = (await api("/firmware")).files.filter((f) => f.model === d.model); } catch (e) { return toast(e.message, true); }
+    if (!files.length) return toast(`Não há firmware na pasta ${d.model}. Envie em Firmware.`, true);
+    const opts = files.map((f, i) => `${i + 1}) ${f.version || "?"} — ${f.name.replace(/^[^/]*\//, "")}`).join("\n");
+    const pick = prompt(`Firmware atual: ${d.software || "?"}\n\nArquivos da pasta ${d.model}:\n${opts}\n\nDigite o número do arquivo:`, "1");
+    const f = files[Number(pick) - 1];
+    if (!f) return;
+    if (!confirm(`Atualizar o firmware de ${d.ssid || d.serial}?\n\nDe: ${d.software || "?"}\nPara: ${f.version || f.name}\n\n` +
+      "• O roteador baixa o arquivo, grava e reinicia: o cliente fica sem internet por alguns minutos.\n" +
+      "• Não desligue nem reinicie o equipamento durante a atualização (o Reiniciar fica bloqueado por 10 min).\n" +
+      "• A atualização pode TROCAR O MAC usado na autenticação: confira o login IPoE no SGP/BNG depois.\n" +
+      "• Algumas versões não aceitam pular direto para a mais nova (ex.: a 0.2.0 precisou passar pela 0.4.0 antes da 0.8.0).\n" +
+      "• Se o roteador recusar o arquivo, o portal NÃO repete a atualização sozinho.")) return;
+    try {
+      const r = await api(`/devices/${enc(id)}/firmware`, { method: "POST", body: { file: f.name }, loading: "Enviando comando de atualização…" });
+      toast(r.done ? "Atualização iniciada: o roteador vai baixar o firmware e reiniciar. Acompanhe o resultado ao lado da versão."
+        : "Equipamento não respondeu agora; a atualização fica na fila até o próximo inform.");
+      setTimeout(() => route(true), 2500);
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+// Linha com o resultado da última atualização de firmware (ao lado da versão)
+function fwJobLine(j) {
+  if (!j || !j.status) return "";
+  const quando = timeAgo(j.updatedAt || j.at);
+  if (j.status === "enviado") return `<div class="muted" style="margin-top:4px">⏳ Atualização para ${esc(j.to || "?")} enviada ${timeAgo(j.at)} por ${esc(j.user || "")}</div>`;
+  if (j.status === "concluido") return `<div style="margin-top:4px;color:var(--good)">✅ Atualizado de ${esc(j.from || "?")} para ${esc(j.result || j.to || "?")} (${quando})</div>`;
+  if (j.status === "recusado") return `<div style="margin-top:4px;color:var(--bad)">✕ O roteador recusou o firmware ${esc(j.to || "")} (${esc(j.code || "")}${j.message ? " " + esc(j.message) : ""}, ${quando}). Não será repetido automaticamente.</div>`;
+  return "";
 }
 
 async function pageFaults() {
@@ -776,6 +895,7 @@ const ROUTES = {
   "": ["dashboard", "Dashboard", pageDashboard],
   devices: ["devices", "Dispositivos", pageDevices],
   faults: ["faults", "Falhas", pageFaults],
+  firmware: ["firmware", "Firmware", pageFirmware],
   provisions: ["provisions", "Provisions", pageProvisions],
   presets: ["presets", "Presets", pagePresets],
   virtual_parameters: ["virtual_parameters", "Virtual Parameters", pageVirtualParameters],

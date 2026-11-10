@@ -7,10 +7,14 @@ const { ONLINE_MINUTES } = require("./env");
 const RX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.RXPower"];
 const TX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.TXPower"];
 
+// Versão do firmware: o virtual parameter não é recalculado depois de uma atualização,
+// então usa a leitura mais recente entre ele e os parâmetros do próprio equipamento
+const SOFTWARE_PATHS = ["Device.DeviceInfo.SoftwareVersion", "InternetGatewayDevice.DeviceInfo.SoftwareVersion", "VirtualParameters.SoftwareVersion"];
+
 const PROJECTION = [
   "_id", "_deviceId", "_lastInform", "_registered", "_tags",
   "VirtualParameters.IP", "VirtualParameters.WANIP", "VirtualParameters.LANIP",
-  "VirtualParameters.MAC", "VirtualParameters.SSID", "VirtualParameters.SoftwareVersion",
+  "VirtualParameters.MAC", "VirtualParameters.SSID", ...SOFTWARE_PATHS,
   ...RX_PATHS, ...TX_PATHS,
 ].join(",");
 
@@ -26,6 +30,18 @@ function get(doc, path) {
 function val(doc, path) {
   const o = get(doc, path);
   return o && o._value !== undefined ? o._value : undefined;
+}
+
+// Valor com a data de leitura mais recente entre vários caminhos
+function freshest(doc, paths) {
+  let best = null;
+  for (const p of paths) {
+    const o = get(doc, p);
+    if (!o || o._value === undefined || o._value === "") continue;
+    const t = o._timestamp ? Date.parse(o._timestamp) : 0;
+    if (!best || t > best.t) best = { v: String(o._value), t };
+  }
+  return best ? best.v : "";
 }
 
 function first(doc, paths) {
@@ -84,7 +100,7 @@ function normalize(doc) {
     wanIp: val(doc, "VirtualParameters.IP") || val(doc, "VirtualParameters.WANIP") || "",
     lanIp: val(doc, "VirtualParameters.LANIP") || "",
     ssid: val(doc, "VirtualParameters.SSID") || "",
-    software: val(doc, "VirtualParameters.SoftwareVersion") || "",
+    software: freshest(doc, SOFTWARE_PATHS),
     rx,
     tx: toDbm(first(doc, TX_PATHS)),
     signal: signalLevel(rx),
