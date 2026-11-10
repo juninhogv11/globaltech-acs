@@ -9,7 +9,11 @@ const username = (devId && devId.value && devId.value[0]) ? devId.value[0] : "";
 const password = Math.trunc(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
 
 // Identifica se o equipamento responde por TR-098 (IGD) ou TR-181 (Device)
-const isIGD = declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {value: 1}).size > 0;
+// Modelos TR-181 que também respondem pelo TR-098 (ex.: TPLG1507E7F0): seguem o caminho TR-181
+const TR181_MODELS = ["XX530v"];
+const pcObj = declare("DeviceID.ProductClass", {value: 1});
+const isTr181Model = TR181_MODELS.indexOf((pcObj && pcObj.value) ? String(pcObj.value[0]) : "") >= 0;
+const isIGD = declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {value: 1}).size > 0 && !isTr181Model;
 
 if (isIGD) {
   // ==========================

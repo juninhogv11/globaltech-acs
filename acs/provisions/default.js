@@ -8,8 +8,12 @@ const now = Date.now();
 let devType = declare("DeviceID.ProductClass", {value: 1});
 let isIGD = false;
 
+// Modelos TR-181 que também respondem pelo TR-098 (ex.: TPLG1507E7F0): seguem o caminho TR-181
+const TR181_MODELS = ["XX530v"];
+const pcObj = declare("DeviceID.ProductClass", {value: 1});
+const isTr181Model = TR181_MODELS.indexOf((pcObj && pcObj.value) ? String(pcObj.value[0]) : "") >= 0;
 let igdCheck = declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {value: 1});
-if (igdCheck && igdCheck.value !== undefined) {
+if (igdCheck && igdCheck.value !== undefined && !isTr181Model) {
   isIGD = true;
 }
 

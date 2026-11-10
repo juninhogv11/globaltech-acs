@@ -6,7 +6,11 @@ let devIdStr = (devIdObj && devIdObj.value && devIdObj.value[0]) ? String(devIdO
 log(">>> [ETAPA 1] Iniciando provision para: " + devIdStr);
 
 let igdCheck = declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {value: 1});
-const isIGD = (igdCheck && igdCheck.value !== undefined);
+// Modelos TR-181 que também respondem pelo TR-098 (ex.: TPLG1507E7F0): seguem o caminho TR-181
+const TR181_MODELS = ["XX530v"];
+const pcObj = declare("DeviceID.ProductClass", {value: 1});
+const isTr181Model = TR181_MODELS.indexOf((pcObj && pcObj.value) ? String(pcObj.value[0]) : "") >= 0;
+const isIGD = (igdCheck && igdCheck.value !== undefined) && !isTr181Model;
 log(">>> [ETAPA 2] Dispositivo identificado como isIGD = " + isIGD);
 
 // =========================================================================
