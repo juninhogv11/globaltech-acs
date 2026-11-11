@@ -601,11 +601,13 @@ async function pageDevice(id) {
         </div>
       </div>
       <div class="device-info"><h2>Informações</h2><dl class="kv">
-        <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `<b class="client-id">${esc(d.sgpCliente)}</b>${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
+        <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `${sgpClienteLink(d.sgpCliente)}${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
         <dt>Serial</dt><dd>${esc(d.serial)}</dd>
         <dt>Fabricante / modelo</dt><dd>${esc(d.manufacturer)} ${esc(d.model)}</dd>
         <dt>Firmware</dt><dd>${esc(d.software || "—")}
-          ${d.online ? `<button class="btn sm" id="fw-upgrade" style="margin-left:8px">Atualizar firmware</button>` : ""}
+          ${d.online ? `<button class="btn sm" id="fw-upgrade" style="margin-left:8px">Atualizar firmware</button>`
+            : `<button class="btn sm" disabled style="margin-left:8px;opacity:.5;cursor:not-allowed" title="Equipamento offline: reinicie a ONT e aguarde ela voltar a se comunicar com o ACS para atualizar o firmware.">Atualizar firmware</button>
+               <div class="muted" style="margin-top:4px">Atualização disponível só com o equipamento online.</div>`}
           ${fwJobLine(fj)}</dd>
         <dt>MAC</dt><dd><code>${esc(d.mac || "—")}</code></dd>
         <dt>IP WAN</dt><dd>${esc(d.wanIp || "—")}</dd>
@@ -942,8 +944,17 @@ $("#logout").addEventListener("click", async () => {
   location.href = "/login.html";
 });
 
+// Código do cliente com link para a ficha no SGP (nova aba)
+let SGP_URL = "";
+function sgpClienteLink(id) {
+  const tag = `<b class="client-id">${esc(id)}</b>`;
+  if (!SGP_URL || !/^\d+$/.test(String(id))) return tag;
+  return `<a href="${esc(SGP_URL)}/admin/cliente/${enc(id)}/contratos/" target="_blank" rel="noopener noreferrer" title="Abrir o cliente no SGP">${tag} ↗</a>`;
+}
+
 (async () => {
   const me = await api("/me");
+  SGP_URL = me.sgpUrl || "";
   $("#username").textContent = me.name;
   $("#avatar").textContent = (me.name || "?")[0].toUpperCase();
   window.addEventListener("hashchange", () => route());
