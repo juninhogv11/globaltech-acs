@@ -604,6 +604,7 @@ async function pageDevice(id) {
         <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `${sgpClienteLink(d.sgpCliente)}${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
         <dt>Serial</dt><dd>${esc(d.serial)}</dd>
         <dt>Fabricante / modelo</dt><dd>${esc(d.manufacturer)} ${esc(d.model)}</dd>
+        <dt>Hardware</dt><dd>${esc(d.hardware || "—")}</dd>
         <dt>Firmware</dt><dd>${esc(d.software || "—")}
           ${d.online ? `<button class="btn sm" id="fw-upgrade" style="margin-left:8px">Atualizar firmware</button>`
             : `<button class="btn sm" disabled style="margin-left:8px;opacity:.5;cursor:not-allowed" title="Equipamento offline: reinicie a ONT e aguarde ela voltar a se comunicar com o ACS para atualizar o firmware.">Atualizar firmware</button>
@@ -732,10 +733,13 @@ async function pageDevice(id) {
 const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB");
 
 // Envia o arquivo com barra de progresso no quadro central
-function uploadFirmware(file, model, version) {
+// Placa de hardware = primeira palavra do HardwareVersion (ex.: "XX530vV2 v2.0 00000000" -> "XX530vV2")
+const hwBoard = (hw) => String(hw || "").trim().split(/\s+/)[0] || "";
+
+function uploadFirmware(file, model, hardware, version) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const qs = new URLSearchParams({ model, version, filename: file.name });
+    const qs = new URLSearchParams({ model, hardware, version, filename: file.name });
     xhr.open("POST", "/api/firmware/upload?" + qs);
     xhr.setRequestHeader("X-Requested-With", "portal");
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -756,10 +760,12 @@ function uploadFirmware(file, model, version) {
 }
 
 async function pageFirmware() {
-  const { files, models, maxMb } = await api("/firmware");
+  const { files, models, hardware, maxMb } = await api("/firmware");
   const folders = {};
   for (const m of models) folders[m] = [];
   for (const f of files) (folders[f.model] = folders[f.model] || []).push(f);
+  const boards = [...new Set(hardware.map((h) => h.hardware).filter((h) => h !== "?"))].sort();
+  const boardsOf = (m) => hardware.filter((h) => h.model === m);
   view.innerHTML = `
     <div class="page-head"><h1>Firmware</h1><span class="muted">${files.length} arquivo(s) no servidor do GenieACS</span></div>
     <div class="card" style="margin-bottom:16px">
@@ -768,21 +774,32 @@ async function pageFirmware() {
         <label>Modelo (pasta)
           <input id="fw-model" list="fw-models" required placeholder="ex.: XX530v" value="${esc(models[0] || "")}">
           <datalist id="fw-models">${models.map((m) => `<option value="${esc(m)}">`).join("")}</datalist></label>
+        <label>Hardware(s) aceito(s)
+          <input id="fw-hw" list="fw-hws" required placeholder="ex.: XX530vV2, XX530v" pattern="[A-Za-z0-9._\\-]{1,40}( *[,;] *[A-Za-z0-9._\\-]{1,40})*">
+          <datalist id="fw-hws">${boards.map((h) => `<option value="${esc(h)}">`).join("")}</datalist></label>
         <label>Versão<input id="fw-version" required placeholder="ex.: 0.5.0 Build 251104"></label>
         <label>Arquivo (até ${maxMb} MB)<input id="fw-file" type="file" required accept=".bin,.img,.w,.fw,.tar,.gz,.zip"></label>
         <button class="btn primary" type="submit">Enviar</button>
       </form>
-      <p class="muted" style="margin:10px 0 0">Use só o firmware oficial do fabricante para esse modelo. O modelo precisa ser igual ao do equipamento (coluna "Modelo" em Dispositivos).</p>
+      <p class="muted" style="margin:10px 0 0">Use só o firmware oficial do fabricante. Informe os hardwares (primeira palavra do campo
+        "Hardware" do equipamento) que aceitam o arquivo, separados por vírgula. O portal só oferece o arquivo a esses equipamentos.
+        O texto do hardware vem do firmware: o XX530v no 0.2.0 informa <b>XX530v</b> e passa a informar <b>XX530vV2</b> depois de
+        atualizado, então os arquivos XX530vV2v2 valem para <b>XX530vV2, XX530v</b>.</p>
     </div>
     ${Object.keys(folders).sort().map((m) => `
       <div class="card" style="margin-bottom:12px">
         <div class="card-head"><h2>📁 ${esc(m)}</h2><span class="muted">${folders[m].length} arquivo(s)</span></div>
+        ${boardsOf(m).length ? `<p class="muted" style="margin:0 0 10px">Equipamentos por hardware: ${boardsOf(m).map((h) =>
+          `<b>${esc(h.hardware)}</b> ${h.count} (${Object.entries(h.versions).sort((a, b) => b[1] - a[1]).map(([v, n]) => `${esc(v.split(" ")[0])}: ${n}`).join(", ")})`).join(" · ")}</p>` : ""}
         ${folders[m].length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Arquivo</th><th>Versão</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead>
+          <thead><tr><th>Arquivo</th><th>Hardware</th><th>Versão</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead>
           <tbody>${folders[m].map((f) => `<tr>
-            <td><code>${esc(f.name.replace(/^[^/]*\//, ""))}</code></td><td>${esc(f.version || "—")}</td>
+            <td><code>${esc(f.name.replace(/^[^/]*\//, ""))}</code></td>
+            <td>${f.hardware.length ? esc(f.hardware.join(", ")) : `<span style="color:var(--bad)">não informado</span>`}</td>
+            <td>${esc(f.version || "—")}</td>
             <td>${fmtSize(f.size)}</td><td title="${esc(fmtDate(f.uploadedAt))}">${timeAgo(f.uploadedAt)}</td>
-            <td><button class="btn sm danger" data-fw-del="${esc(f.name)}">Apagar</button></td></tr>`).join("")}</tbody>
+            <td style="white-space:nowrap"><button class="btn sm" data-fw-meta="${esc(f.name)}">Hardware / versão</button>
+              <button class="btn sm danger" data-fw-del="${esc(f.name)}">Apagar</button></td></tr>`).join("")}</tbody>
         </table></div>` : `<div class="empty">Nenhum firmware para este modelo.</div>`}
       </div>`).join("")}`;
 
@@ -792,11 +809,25 @@ async function pageFirmware() {
     if (!file) return;
     if (file.size > maxMb * 1048576) return toast(`Arquivo maior que ${maxMb} MB.`, true);
     try {
-      await uploadFirmware(file, $("#fw-model").value.trim(), $("#fw-version").value.trim());
+      await uploadFirmware(file, $("#fw-model").value.trim(), $("#fw-hw").value.trim(), $("#fw-version").value.trim());
       toast("Firmware enviado ao servidor.");
       route(true);
     } catch (ex) { toast(ex.message, true); }
   });
+  view.querySelectorAll("[data-fw-meta]").forEach((b) => b.addEventListener("click", async () => {
+    const f = files.find((x) => x.name === b.dataset.fwMeta);
+    if (!f) return;
+    const opts = boardsOf(f.model).map((h) => h.hardware).filter((h) => h !== "?").join(", ");
+    const hw = prompt(`Hardwares que aceitam este firmware, separados por vírgula:\n${f.name}\n\nHardwares do modelo ${f.model}: ${opts || "—"}`, f.hardware.join(", "));
+    if (hw === null) return;
+    const version = prompt("Versão do firmware (como aparece no equipamento depois de atualizado):", f.version || "");
+    if (version === null) return;
+    try {
+      await api("/firmware/meta", { method: "POST", body: { name: f.name, hardware: hw.trim(), version: version.trim() }, loading: "Salvando…" });
+      toast("Firmware atualizado.");
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  }));
   view.querySelectorAll("[data-fw-del]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm(`Apagar o firmware ${b.dataset.fwDel} do servidor?`)) return;
     try {
@@ -812,18 +843,26 @@ function bindFirmwareUpgrade(id, d) {
   const btn = $("#fw-upgrade");
   if (!btn) return;
   btn.addEventListener("click", async () => {
-    let files;
-    try { files = (await api("/firmware")).files.filter((f) => f.model === d.model); } catch (e) { return toast(e.message, true); }
-    if (!files.length) return toast(`Não há firmware na pasta ${d.model}. Envie em Firmware.`, true);
+    let all;
+    try { all = (await api("/firmware")).files.filter((f) => f.model === d.model); } catch (e) { return toast(e.message, true); }
+    if (!all.length) return toast(`Não há firmware na pasta ${d.model}. Envie em Firmware.`, true);
+    const board = hwBoard(d.hardware);
+    if (!board) return toast("Não foi possível ler o hardware deste equipamento. Clique em \"Atualizar agora\" e tente de novo.", true);
+    // Só arquivos que aceitam este hardware: firmware de outra linha o roteador recusa (9010)
+    const files = all.filter((f) => f.hardware.includes(board));
+    if (!files.length) {
+      const outros = [...new Set(all.flatMap((f) => (f.hardware.length ? f.hardware : ["não informado"])))].join(", ");
+      return toast(`Não há firmware para o hardware ${board} (${d.hardware}). Os arquivos da pasta ${d.model} são do hardware: ${outros}. Envie o firmware certo em Firmware.`, true);
+    }
     const opts = files.map((f, i) => `${i + 1}) ${f.version || "?"} — ${f.name.replace(/^[^/]*\//, "")}`).join("\n");
-    const pick = prompt(`Firmware atual: ${d.software || "?"}\n\nArquivos da pasta ${d.model}:\n${opts}\n\nDigite o número do arquivo:`, "1");
+    const pick = prompt(`Firmware atual: ${d.software || "?"}\nHardware: ${d.hardware}\n\nArquivos que aceitam o hardware ${board}:\n${opts}\n\nDigite o número do arquivo:`, "1");
     const f = files[Number(pick) - 1];
     if (!f) return;
     if (!confirm(`Atualizar o firmware de ${d.ssid || d.serial}?\n\nDe: ${d.software || "?"}\nPara: ${f.version || f.name}\n\n` +
       "• O roteador baixa o arquivo, grava e reinicia: o cliente fica sem internet por alguns minutos.\n" +
       "• Não desligue nem reinicie o equipamento durante a atualização (o Reiniciar fica bloqueado por 10 min).\n" +
       "• A atualização pode TROCAR O MAC usado na autenticação: confira o login IPoE no SGP/BNG depois.\n" +
-      "• Algumas versões não aceitam pular direto para a mais nova (ex.: a 0.2.0 precisou passar pela 0.4.0 antes da 0.8.0).\n" +
+      "• Algumas versões não aceitam pular direto para a mais nova (ex.: o XX530v na 0.2.0 recusou a 0.8.0, mas aceitou a 0.6.0).\n" +
       "• Se o roteador recusar o arquivo, o portal NÃO repete a atualização sozinho.")) return;
     try {
       const r = await api(`/devices/${enc(id)}/firmware`, { method: "POST", body: { file: f.name }, loading: "Enviando comando de atualização…" });

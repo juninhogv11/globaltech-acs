@@ -178,18 +178,36 @@ api.post("/api/devices/:id/wifi", async (req, res) => {
 // ---------- Firmware (arquivos por modelo no GenieACS e atualização do equipamento) ----------
 api.get("/api/firmware", async (req, res) => {
   const [files, list] = await Promise.all([firmware.list(), devices.all()]);
+  // Placas de hardware existentes por modelo, com quantos equipamentos e versões de firmware
+  const hw = {};
+  for (const d of list) {
+    if (!d.model) continue;
+    const k = `${d.model}|${firmware.board(d.hardware) || "?"}`;
+    const e = (hw[k] = hw[k] || { model: d.model, hardware: firmware.board(d.hardware) || "?", count: 0, versions: {} });
+    e.count++;
+    if (d.software) e.versions[d.software] = (e.versions[d.software] || 0) + 1;
+  }
   res.json({
     files,
     models: [...new Set(list.map((d) => d.model).filter(Boolean))].sort(),
+    hardware: Object.values(hw).sort((a, b) => a.model.localeCompare(b.model) || a.hardware.localeCompare(b.hardware)),
     maxMb: firmware.MAX_BYTES / 1048576,
   });
 });
 
-// Corpo binário (o arquivo); modelo, versão e nome vêm na URL
+// Corpo binário (o arquivo); modelo, hardware, versão e nome vêm na URL
 api.post("/api/firmware/upload", async (req, res) => {
   const q = new URL(req.url, "http://localhost").searchParams;
-  const r = await firmware.upload(req, { model: q.get("model"), version: q.get("version"), filename: q.get("filename") });
-  console.log(new Date().toISOString(), `firmware enviado ${r.name} (${Math.round(r.size / 1048576)} MB) por ${req.user.user}`);
+  const r = await firmware.upload(req, { model: q.get("model"), hardware: q.get("hardware"), version: q.get("version"), filename: q.get("filename") });
+  console.log(new Date().toISOString(), `firmware enviado ${r.name} (${Math.round(r.size / 1048576)} MB, hardware ${r.hardware}) por ${req.user.user}`);
+  res.json(r);
+});
+
+// Corrige hardware/versão de um arquivo já enviado
+api.post("/api/firmware/meta", async (req, res) => {
+  const b = req.body || {};
+  const r = await firmware.setMeta(String(b.name || ""), { hardware: b.hardware, version: b.version });
+  console.log(new Date().toISOString(), `firmware ${r.name}: hardware ${r.hardware.join(", ")}, versao ${r.version} por ${req.user.user}`);
   res.json(r);
 });
 
