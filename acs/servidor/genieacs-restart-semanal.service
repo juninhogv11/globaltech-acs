@@ -1,0 +1,6 @@
+[Unit]
+Description=Reinicia genieacs-nbi e genieacs-fs (libera memoria acumulada)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart genieacs-nbi genieacs-fs
