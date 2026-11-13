@@ -12,6 +12,10 @@ portal/data/
 portal/vendor/
 node_modules/
 
+# Anotações internas (clientes, seriais, IPs): o repositório é público
+HISTORICO.md
+CLAUDE.md
+
 # Sistema
 .DS_Store
 Thumbs.db
