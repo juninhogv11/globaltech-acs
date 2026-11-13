@@ -1,0 +1,7 @@
+{
+  "weight": 0,
+  "channel": "reboot",
+  "events": {"2 PERIODIC": true},
+  "precondition": "Tags.BOOTSTRAP_PENDING IS NULL AND Tags.SEM_REBOOT IS NULL",
+  "configurations": [{"type": "provision", "name": "reboot_periodico", "args": null}]
+}

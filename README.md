@@ -115,8 +115,11 @@ tinham alguns desses endereços fixos no código.
 | `02_PROVISION_IPOE` | sem tag `Provisioned` **ou** com `BOOTSTRAP_PENDING` | URL do ACS, credenciais do Connection Request; consulta o SGP **pelo serial** e, se não achar, **pelo login = MAC WAN** (`xxxx-xxxx-xxxx`); grava as tags `SGP_CLIENTE_<id>` e `SGP_CONTRATO_<id>`; sem contrato → tag `ERRO_SGP` |
 | `04_WIFI_RESTORE` (canal `wifi`) | tag `BOOTSTRAP_PENDING` | só se o Wi-Fi voltou ao padrão `TP-Link_XXXX`: grava nome e senha guardados (portal ou SGP) |
 | `05_BOOTSTRAP_DONE` (canal `bootstrap`) | `2 PERIODIC` com `BOOTSTRAP_PENDING` | tira a marca `BOOTSTRAP_PENDING` no primeiro inform periódico, fora da sessão do BOOTSTRAP |
+| `06_REBOOT_PERIODICO` (canal `reboot`) | `2 PERIODIC`, sem `BOOTSTRAP_PENDING` e sem tag `SEM_REBOOT` | entre 03:00 e 05:00 (Brasília) reinicia quem está ligado há **48 h ou mais**; cada equipamento tem seu minuto na janela (calculado pelo ID) para não reiniciarem todos juntos; não repete se o ACS já pediu reboot nas últimas 20 h |
 | `default` | todo inform | leitura periódica (IP, sinal óptico RX/TX, Wi-Fi, hosts) e virtual parameters |
 | `inform` | `2 PERIODIC` | intervalo de inform, NTP, atualização diária da árvore |
+
+Para tirar um equipamento do reboot automático, coloque nele a tag `SEM_REBOOT` (pela interface do GenieACS). Os reboots ficam no log: `grep REBOOT_PERIODICO /var/log/genieacs/genieacs-cwmp-access.log`.
 
 O XX530v **não informa a senha do Wi-Fi** ao ACS (o campo é só de escrita). Por isso a
 restauração depende de uma cópia: ela é guardada quando o Wi-Fi é alterado pelo botão
@@ -135,5 +138,5 @@ restauração depende de uma cópia: ela é guardada quando o Wi-Fi é alterado 
 
 ```bash
 journalctl -u globaltech-portal -f                                   # log do portal
-grep -E 'ETAPA|PAROU|WIFI' /var/log/genieacs/genieacs-cwmp-access.log | tail   # provisionamento
+grep -E 'ETAPA|PAROU|WIFI|REBOOT_PERIODICO' /var/log/genieacs/genieacs-cwmp-access.log | tail   # provisionamento
 ```
