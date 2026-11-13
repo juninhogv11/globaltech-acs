@@ -838,6 +838,94 @@ async function pageFirmware() {
   }));
 }
 
+// "0.6.0 3.1.10 v60dc.0 Build 251231 Rel.46203n" -> { ver: [0,6,0], line: "3.1.10", build: "251231" }
+function fwParse(v) {
+  const s = String(v || "").replace(/^V\d+\s+/i, "");
+  const p = s.split(/\s+/);
+  return {
+    ver: (p[0] || "").split(".").map(Number),
+    line: /^\d+\.\d+\.\d+$/.test(p[1] || "") ? p[1] : "",
+    build: (s.match(/Build\s+(\d+)/i) || [])[1] || "",
+  };
+}
+const fwCmp = (a, b) => { for (let i = 0; i < 3; i++) { const x = (a[i] || 0) - (b[i] || 0); if (x) return x; } return 0; };
+
+// Janela de escolha do firmware (lista com versão, linha, tamanho e avisos). Resolve com o arquivo ou null.
+function pickFirmware(d, files) {
+  const cur = fwParse(d.software);
+  const items = files
+    .map((f) => ({ f, p: fwParse(f.version) }))
+    .sort((a, b) => fwCmp(b.p.ver, a.p.ver));
+  const newest = items.length ? items[0].f : null;
+  const info = (it) => {
+    const same = it.p.build && it.p.build === cur.build && fwCmp(it.p.ver, cur.ver) === 0;
+    const older = !same && fwCmp(it.p.ver, cur.ver) < 0;
+    const otherLine = !same && cur.line && it.p.line && it.p.line !== cur.line;
+    return { same, older, otherLine };
+  };
+  // Sugestão: a mais nova da mesma linha do equipamento; senão a mais nova
+  const sameLine = items.find((it) => { const i = info(it); return !i.same && !i.older && !i.otherLine; });
+  const suggested = (sameLine || items.find((it) => !info(it).same) || {}).f;
+
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "fw-dialog";
+    dlg.innerHTML = `
+      <form method="dialog">
+        <h2>Atualizar firmware</h2>
+        <p class="muted" style="margin:0 0 14px">${esc(d.ssid || d.serial)} · ${esc(d.model)}</p>
+        <dl class="kv fw-cur">
+          <dt>Firmware atual</dt><dd><b>${esc(d.software || "?")}</b></dd>
+          <dt>Hardware</dt><dd>${esc(d.hardware || "?")}</dd>
+        </dl>
+        <div class="fw-list" role="radiogroup" aria-label="Firmware">
+          ${items.map((it, i) => {
+            const n = info(it);
+            const tags = [
+              n.same ? `<span class="fw-tag">instalada</span>` : "",
+              it.f === newest && !n.same ? `<span class="fw-tag good">mais nova</span>` : "",
+              it.f === suggested ? `<span class="fw-tag brand">sugerida</span>` : "",
+              n.older ? `<span class="fw-tag warn">mais antiga</span>` : "",
+              n.otherLine ? `<span class="fw-tag warn">outra linha (${esc(it.p.line)})</span>` : "",
+            ].join("");
+            return `<label class="fw-item${n.same ? " disabled" : ""}">
+              <input type="radio" name="fw" value="${i}" ${n.same ? "disabled" : ""} ${it.f === suggested ? "checked" : ""}>
+              <span class="fw-body">
+                <span class="fw-ver">${esc(it.f.version || "?")}</span>
+                <span class="fw-tags">${tags}</span>
+                <span class="fw-file">${esc(it.f.name.replace(/^[^/]*\//, ""))} · ${fmtSize(it.f.size)}</span>
+                ${n.otherLine ? `<span class="fw-note">Saltos para outra linha podem ser recusados (a 0.2.0 recusou a 0.8.0 3.2.2 e aceitou a 0.6.0 3.1.10). Se recusar, atualize antes para a mais nova da linha ${esc(cur.line)}.</span>` : ""}
+              </span>
+            </label>`;
+          }).join("")}
+        </div>
+        <ul class="fw-warn">
+          <li>O roteador baixa o arquivo, grava e reinicia: o cliente fica alguns minutos sem internet.</li>
+          <li>Não desligue nem reinicie durante a atualização (o Reiniciar fica bloqueado por 10 min).</li>
+          <li>Confira depois se o login IPoE no SGP/BNG continua funcionando (a atualização pode trocar o MAC).</li>
+          <li>Se o roteador recusar o arquivo, o portal não repete sozinho.</li>
+        </ul>
+        <div class="fw-actions">
+          <button class="btn" value="cancel" type="submit">Cancelar</button>
+          <button class="btn primary" value="ok" type="submit" id="fw-ok">Atualizar</button>
+        </div>
+      </form>`;
+    document.body.appendChild(dlg);
+    const okBtn = dlg.querySelector("#fw-ok");
+    const sync = () => { okBtn.disabled = !dlg.querySelector("input[name=fw]:checked"); };
+    dlg.addEventListener("change", sync);
+    sync();
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close("cancel"); });
+    dlg.addEventListener("close", () => {
+      const sel = dlg.querySelector("input[name=fw]:checked");
+      const f = dlg.returnValue === "ok" && sel ? items[Number(sel.value)].f : null;
+      dlg.remove();
+      resolve(f);
+    });
+    dlg.showModal();
+  });
+}
+
 // Botão "Atualizar firmware" na página do dispositivo
 function bindFirmwareUpgrade(id, d) {
   const btn = $("#fw-upgrade");
@@ -854,16 +942,8 @@ function bindFirmwareUpgrade(id, d) {
       const outros = [...new Set(all.flatMap((f) => (f.hardware.length ? f.hardware : ["não informado"])))].join(", ");
       return toast(`Não há firmware para o hardware ${board} (${d.hardware}). Os arquivos da pasta ${d.model} são do hardware: ${outros}. Envie o firmware certo em Firmware.`, true);
     }
-    const opts = files.map((f, i) => `${i + 1}) ${f.version || "?"} — ${f.name.replace(/^[^/]*\//, "")}`).join("\n");
-    const pick = prompt(`Firmware atual: ${d.software || "?"}\nHardware: ${d.hardware}\n\nArquivos que aceitam o hardware ${board}:\n${opts}\n\nDigite o número do arquivo:`, "1");
-    const f = files[Number(pick) - 1];
+    const f = await pickFirmware(d, files);
     if (!f) return;
-    if (!confirm(`Atualizar o firmware de ${d.ssid || d.serial}?\n\nDe: ${d.software || "?"}\nPara: ${f.version || f.name}\n\n` +
-      "• O roteador baixa o arquivo, grava e reinicia: o cliente fica sem internet por alguns minutos.\n" +
-      "• Não desligue nem reinicie o equipamento durante a atualização (o Reiniciar fica bloqueado por 10 min).\n" +
-      "• A atualização pode TROCAR O MAC usado na autenticação: confira o login IPoE no SGP/BNG depois.\n" +
-      "• Algumas versões não aceitam pular direto para a mais nova (ex.: o XX530v na 0.2.0 recusou a 0.8.0, mas aceitou a 0.6.0).\n" +
-      "• Se o roteador recusar o arquivo, o portal NÃO repete a atualização sozinho.")) return;
     try {
       const r = await api(`/devices/${enc(id)}/firmware`, { method: "POST", body: { file: f.name }, loading: "Enviando comando de atualização…" });
       toast(r.done ? "Atualização iniciada: o roteador vai baixar o firmware e reiniciar. Acompanhe o resultado ao lado da versão."
