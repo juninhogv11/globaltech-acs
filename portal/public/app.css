@@ -225,6 +225,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .fw-tag.brand { background: var(--brand-soft); color: var(--brand); }
 .fw-tag.warn { background: #fdf0dc; color: #a35f05; }
 .fw-file { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); word-break: break-all; }
+.fw-size { white-space: nowrap; word-break: normal; }
 .fw-note { font-size: 12.5px; color: #a35f05; }
 .fw-warn { margin: 14px 0 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .fw-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }

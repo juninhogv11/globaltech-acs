@@ -893,7 +893,7 @@ function pickFirmware(d, files) {
               <span class="fw-body">
                 <span class="fw-ver">${esc(it.f.version || "?")}</span>
                 <span class="fw-tags">${tags}</span>
-                <span class="fw-file">${esc(it.f.name.replace(/^[^/]*\//, ""))} · ${fmtSize(it.f.size)}</span>
+                <span class="fw-file">${esc(it.f.name.replace(/^[^/]*\//, ""))} <span class="fw-size">· ${fmtSize(it.f.size)}</span></span>
                 ${n.otherLine ? `<span class="fw-note">Saltos para outra linha podem ser recusados (a 0.2.0 recusou a 0.8.0 3.2.2 e aceitou a 0.6.0 3.1.10). Se recusar, atualize antes para a mais nova da linha ${esc(cur.line)}.</span>` : ""}
               </span>
             </label>`;
