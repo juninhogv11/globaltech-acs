@@ -186,21 +186,32 @@ async function watch() {
   if (watching) return;
   watching = true;
   try {
-    // 1) Firmware recusado: apaga a fault (impede a repetição) e registra
+    // 1) Fault do download: apaga (impede a repetição) e registra.
+    //    "timeout" NÃO quer dizer recusa: a TP-Link grava, reinicia e às vezes não manda o
+    //    TransferComplete; horas depois o GenieACS dá timeout na tarefa. Se a atualização já
+    //    tinha sido concluída, mantém "concluido"; se não, a etapa 2 ainda confere a versão.
     for (const f of await nbi.list("faults")) {
       if (!String(f.provisions || "").includes(FIRMWARE_TYPE)) continue;
       await nbi.deleteFault(f._id).catch(() => {});
+      const j = history(f.device);
+      if (j && j.status === "concluido") {
+        console.log(new Date().toISOString(), `firmware: ${f.code} de ${f.device} depois da atualização concluída (${j.result}); ignorado`);
+        continue;
+      }
       record(f.device, { status: "recusado", code: f.code, message: f.message || "", failedAt: f.timestamp });
       console.log(new Date().toISOString(), `firmware recusado por ${f.device} (${f.code}); repetição automática cancelada`);
     }
-    // 2) Atualização concluída: a versão do equipamento mudou
-    const pend = Object.entries(loadHistory()).filter(([, j]) => j.status === "enviado");
+    // 2) Atualização concluída: a versão do equipamento mudou (também depois de um timeout)
+    const pend = Object.entries(loadHistory()).filter(([, j]) => j.status === "enviado" || (j.status === "recusado" && j.code === "timeout"));
     if (pend.length) {
       const docs = await nbi.devices({ _id: { $in: pend.map(([id]) => id) } }, "_id,Device.DeviceInfo.SoftwareVersion,InternetGatewayDevice.DeviceInfo.SoftwareVersion");
       for (const d of docs) {
         const v = ((((d.Device || {}).DeviceInfo || {}).SoftwareVersion) || (((d.InternetGatewayDevice || {}).DeviceInfo || {}).SoftwareVersion) || {})._value;
         const j = loadHistory()[d._id];
-        if (v && j && v !== j.from) record(d._id, { status: "concluido", result: v });
+        if (v && j && v !== j.from) {
+          record(d._id, { status: "concluido", result: v, code: null, message: "" });
+          console.log(new Date().toISOString(), `firmware de ${d._id} atualizado: ${j.from} -> ${v}`);
+        }
       }
     }
   } catch (e) {
