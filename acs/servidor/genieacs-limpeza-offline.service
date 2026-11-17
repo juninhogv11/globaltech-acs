@@ -1,0 +1,7 @@
+[Unit]
+Description=Remove do GenieACS equipamentos offline ha 7+ dias (nao vinculados ou contrato cancelado no SGP)
+After=genieacs-nbi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/genieacs/limpeza-offline.js --apply --dias 7 --max 10
