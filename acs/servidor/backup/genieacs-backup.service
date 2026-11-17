@@ -1,0 +1,8 @@
+[Unit]
+Description=Backup do GenieACS para o FTP
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/genieacs-backup/genieacs-backup.js backup

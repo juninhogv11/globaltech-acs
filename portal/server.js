@@ -10,6 +10,7 @@ const speedtest = require("./lib/speedtest");
 const models = require("./lib/models");
 const wifibackup = require("./lib/wifibackup");
 const firmware = require("./lib/firmware");
+const backup = require("./lib/backup");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
 const WIFI_BACKUP_ALLOW = (process.env.WIFI_BACKUP_ALLOW || "192.168.10.2").split(",").map((s) => s.trim());
@@ -344,6 +345,36 @@ api.delete("/api/faults/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Backups (API de backup no servidor GenieACS) ----------
+api.get("/api/backups", async (req, res) => {
+  if (!backup.configured()) return res.json({ configurado: false, backups: [] });
+  res.json({ configurado: true, ...(await backup.agent("GET", "/backups")) });
+});
+
+api.post("/api/backups", async (req, res) => {
+  const r = await backup.agent("POST", "/backups", undefined, 30 * 60000);
+  console.log(new Date().toISOString(), `backup manual ${r.name} por ${req.user.user}`);
+  res.json(r);
+});
+
+api.post("/api/backups/restore", async (req, res) => {
+  const b = req.body || {};
+  const escopo = String(b.escopo || "");
+  if (!["config", "aparelho", "tudo", "portal"].includes(escopo)) return res.status(400).json({ error: "Escolha o que restaurar." });
+  if (String(b.confirmacao || "").trim().toUpperCase() !== "RESTAURAR") return res.status(400).json({ error: "Digite RESTAURAR para confirmar." });
+  const r = await backup.agent("POST", "/restaurar", { name: b.name, escopo, aparelho: b.aparelho }, 30 * 60000);
+  console.log(new Date().toISOString(), `restauração ${escopo}${b.aparelho ? " " + b.aparelho : ""} do backup ${b.name} por ${req.user.user}`);
+  if (escopo === "portal") {
+    const gravados = backup.restorePortal(r.portal, { incluirUsuarios: !!b.incluirUsuarios });
+    res.json({ escopo, gravados, reiniciando: true });
+    // Reinicia o portal para recarregar tudo (systemd sobe de novo em 5 s)
+    setTimeout(() => process.exit(0), 1000);
+    return;
+  }
+  devices.invalidate();
+  res.json({ escopo, aparelho: r.aparelho, antes: r.antes, manifest: r.manifest });
+});
+
 // ---------- Configuração (somente leitura) ----------
 for (const c of ["provisions", "presets", "virtual_parameters"]) {
   api.get(`/api/${c}`, async (req, res) => res.json(await nbi.list(c)));
@@ -369,6 +400,15 @@ const server = http.createServer(async (req, res) => {
       const e = wifibackup.get(decodeURIComponent(wb[1]));
       if (!e) return res.status(404).json({ error: "Sem cópia" });
       return res.json({ source: "portal", wifi: e.wifi, at: e.at });
+    }
+
+    // Dados do portal para o backup diário do GenieACS (só o IP do ACS e com o token)
+    if (pathname === "/internal/backup/portal-data") {
+      const ip = String(req.ip || "").replace(/^::ffff:/, "");
+      if (req.method !== "GET" || !WIFI_BACKUP_ALLOW.includes(ip) || !backup.tokenOk(req.headers["x-backup-token"])) {
+        return res.status(403).json({ error: "Proibido" });
+      }
+      return res.json(backup.portalBundle());
     }
 
     if (!pathname.startsWith("/api/")) {

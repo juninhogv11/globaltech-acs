@@ -1011,8 +1011,112 @@ async function pagePresets() {
     </table></div></div>`;
 }
 
+// ---------- Backups ----------
+const BK_TIPOS = { diario: "Diário", manual: "Manual", "pre-restauracao": "Antes de restaurar" };
+
+async function pageBackups() {
+  const r = await api("/backups");
+  if (!r.configurado) {
+    view.innerHTML = `<div class="page-head"><h1>Backups</h1></div>
+      <div class="card"><div class="empty">Backup não configurado no portal: faltam <code>BACKUP_AGENT_URL</code> e <code>BACKUP_TOKEN</code> no <code>.env</code>.</div></div>`;
+    return;
+  }
+  const list = r.backups || [];
+  view.innerHTML = `
+    <div class="page-head"><h1>Backups</h1><span class="muted">${list.length} backup(s)</span>
+      <button class="btn primary" id="bk-now" style="margin-left:auto" ${r.ocupado ? "disabled" : ""}>Fazer backup agora</button></div>
+    <div class="card" style="margin-bottom:16px">
+      <p style="margin:0">Backup automático todo dia às 02:00: banco do GenieACS (aparelhos, provisions, presets, firmwares),
+        configuração do servidor e dados do portal (Wi-Fi guardado, firmwares, fotos). Os arquivos são criptografados.</p>
+      <p class="muted" style="margin:8px 0 0">Destino: <b>${esc(r.destino || "não configurado (só cópia local no servidor do ACS)")}</b>
+        ${r.erroDestino ? `<br><span style="color:var(--bad)">Erro ao listar o destino: ${esc(r.erroDestino)}</span>` : ""}
+        ${r.ocupado ? `<br><b>Em andamento: ${esc(r.ocupado)}…</b>` : ""}</p>
+    </div>
+    <div class="card">${list.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Tipo</th><th>Onde</th><th>Tamanho</th><th></th></tr></thead>
+      <tbody>${list.map((b) => `<tr>
+        <td>${esc(b.data)}</td><td>${esc(BK_TIPOS[b.tipo] || b.tipo)}</td>
+        <td>${[b.remoto ? "FTP" : "", b.local ? "servidor do ACS" : ""].filter(Boolean).join(" + ")}</td>
+        <td>${b.size ? fmtSize(b.size) : "—"}</td>
+        <td><button class="btn sm" data-bk-restore="${esc(b.name)}">Restaurar…</button></td></tr>`).join("")}</tbody>
+    </table></div>` : `<div class="empty">Nenhum backup ainda.</div>`}</div>`;
+
+  $("#bk-now").addEventListener("click", async () => {
+    try {
+      const b = await api("/backups", { method: "POST", loading: "Fazendo backup… (pode levar alguns minutos)" });
+      toast(b.enviado ? `Backup feito e enviado ao FTP (${fmtSize(b.size)}).` : `Backup feito só no servidor do ACS. ${(b.avisos || []).join(" ")}`, !b.enviado);
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  });
+  view.querySelectorAll("[data-bk-restore]").forEach((btn) => btn.addEventListener("click", () => restoreDialog(list.find((b) => b.name === btn.dataset.bkRestore))));
+}
+
+async function restoreDialog(b) {
+  let devs = [];
+  try { devs = await api("/devices"); } catch {}
+  const dlg = document.createElement("dialog");
+  dlg.className = "fw-dialog";
+  const opt = (v, titulo, texto, checked = false) => `<label class="fw-item"><input type="radio" name="esc" value="${v}" ${checked ? "checked" : ""}>
+    <span class="fw-body"><span class="fw-ver">${titulo}</span><span class="muted" style="font-size:13px">${texto}</span></span></label>`;
+  dlg.innerHTML = `<form method="dialog">
+    <h2>Restaurar backup</h2>
+    <p class="muted" style="margin:0 0 14px">${esc(b.data)} · ${esc(BK_TIPOS[b.tipo] || b.tipo)}</p>
+    <div class="fw-list">
+      ${opt("aparelho", "Um aparelho", "Volta os dados de um aparelho no ACS (ex.: removido por engano). Não mexe no roteador.", true)}
+      ${opt("config", "Configuração do ACS", "Provisions, presets, virtual parameters, firmwares e usuários do painel do GenieACS. Aparelhos não mudam.")}
+      ${opt("portal", "Dados do portal", "Wi-Fi guardado, histórico e hardwares dos firmwares, fotos dos modelos. O portal reinicia.")}
+      ${opt("tudo", "Tudo do ACS", "Substitui o banco inteiro do GenieACS pelo do backup. Mudanças feitas depois do backup se perdem.")}
+    </div>
+    <div id="rs-dev" style="margin-top:12px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ID do aparelho no ACS
+        <input id="rs-id" list="rs-ids" placeholder="ex.: 0CEF15-XX530v-V256010000721" style="width:100%"></label>
+      <datalist id="rs-ids">${devs.map((d) => `<option value="${esc(d.id)}">${esc(d.ssid || d.serial)}</option>`).join("")}</datalist>
+    </div>
+    <label id="rs-users" style="display:none;margin-top:12px;font-size:13px"><input type="checkbox" id="rs-users-cb"> Restaurar também os usuários e senhas do portal</label>
+    <p class="muted" style="font-size:12.5px;margin:14px 0 6px">Antes de restaurar no ACS é feito um backup automático do estado atual ("Antes de restaurar").</p>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">Digite <b>RESTAURAR</b> para confirmar
+      <input id="rs-conf" autocomplete="off" style="width:100%"></label>
+    <div class="fw-actions">
+      <button class="btn" value="cancel" type="submit">Cancelar</button>
+      <button class="btn primary" value="ok" type="submit" id="rs-ok" disabled>Restaurar</button>
+    </div></form>`;
+  document.body.appendChild(dlg);
+  const esc_ = () => dlg.querySelector("input[name=esc]:checked").value;
+  const sync = () => {
+    const e = esc_();
+    dlg.querySelector("#rs-dev").style.display = e === "aparelho" ? "" : "none";
+    dlg.querySelector("#rs-users").style.display = e === "portal" ? "block" : "none";
+    dlg.querySelector("#rs-ok").disabled = dlg.querySelector("#rs-conf").value.trim().toUpperCase() !== "RESTAURAR"
+      || (e === "aparelho" && !dlg.querySelector("#rs-id").value.trim());
+  };
+  dlg.addEventListener("input", sync);
+  dlg.addEventListener("change", sync);
+  sync();
+  dlg.addEventListener("close", async () => {
+    const body = {
+      name: b.name, escopo: esc_(), aparelho: dlg.querySelector("#rs-id").value.trim(),
+      incluirUsuarios: dlg.querySelector("#rs-users-cb").checked, confirmacao: dlg.querySelector("#rs-conf").value,
+    };
+    const ok = dlg.returnValue === "ok";
+    dlg.remove();
+    if (!ok) return;
+    try {
+      const r = await api("/backups/restore", { method: "POST", body, loading: "Restaurando… (pode levar alguns minutos)" });
+      if (r.escopo === "portal") {
+        toast(`Dados do portal restaurados (${r.gravados.length} arquivo(s)). O portal está reiniciando…`);
+        setTimeout(() => location.reload(), 7000);
+      } else {
+        toast(r.escopo === "aparelho" ? `Aparelho ${r.aparelho} restaurado.` : "Restauração concluída. Os serviços do ACS foram reiniciados.");
+        route(true);
+      }
+    } catch (e) { toast(e.message, true); }
+  });
+  dlg.showModal();
+}
+
 // ---------- Roteamento ----------
 const ROUTES = {
+  backups: ["backups", "Backups", pageBackups],
   "": ["dashboard", "Dashboard", pageDashboard],
   devices: ["devices", "Dispositivos", pageDevices],
   faults: ["faults", "Falhas", pageFaults],

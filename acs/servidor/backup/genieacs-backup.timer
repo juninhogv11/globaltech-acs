@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup diario do GenieACS (02:00, antes da janela do reboot periodico)
+
+[Timer]
+OnCalendar=*-*-* 02:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=API de backup/restauracao do GenieACS (usada pelo portal)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/genieacs-backup/genieacs-backup.js serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
