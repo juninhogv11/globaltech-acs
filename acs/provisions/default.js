@@ -1,4 +1,3 @@
-const daily = Date.now() - 86400000;
 const hourly = Date.now() - 3600000;
 const every_ten_minutes = Date.now() - 600000;
 const now = Date.now();
@@ -45,42 +44,39 @@ if (isIGD) {
 // ==========================================
 // 4. LEITURA PERIÓDICA TR-098 (IGD)
 // ==========================================
-// Custo: "path" relista a estrutura (GetParameterNames, caro); "value" só lê o valor (barato).
-// A estrutura inteira já é relida 1x por dia pelo inform.js; aqui só a lista de aparelhos conectados (Hosts)
-// é relistada de hora em hora. Versões e IP WAN também chegam em todo Inform.
 if (isIGD) {
-  declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {path: daily, value: daily});
-  declare("InternetGatewayDevice.DeviceInfo.SoftwareVersion", {path: daily, value: hourly});
-  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.MACAddress", {path: daily, value: daily});
-  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ExternalIPAddress", {path: daily, value: every_ten_minutes});
-  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANIPConnection.*.ExternalIPAddress", {path: daily, value: every_ten_minutes});
-  declare("InternetGatewayDevice.LANDevice.*.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress", {path: daily, value: hourly});
-  declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID", {path: daily, value: hourly});
-  declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.X_TP_PreSharedKey", {path: daily, value: 1});
-  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.HostName", {path: hourly, value: hourly});
-  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.IPAddress", {path: hourly, value: hourly});
-  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.MACAddress", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.DeviceInfo.HardwareVersion", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.DeviceInfo.SoftwareVersion", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.MACAddress", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ExternalIPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANIPConnection.*.ExternalIPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("InternetGatewayDevice.LANDevice.*.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID", {path: hourly, value: hourly});
+  declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.X_TP_PreSharedKey", {path: every_ten_minutes, value: 1});
+  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.HostName", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.IPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.MACAddress", {path: every_ten_minutes, value: every_ten_minutes});
 } else {
   // ==========================================
   // 5. LEITURA PERIÓDICA TR-181 (XX530v)
   // ==========================================
-  declare("Device.DeviceInfo.HardwareVersion", {path: daily, value: daily});
-  declare("Device.DeviceInfo.SoftwareVersion", {path: daily, value: hourly});
-  declare("Device.DeviceInfo.ProductClass", {path: daily, value: daily});
-  declare("Device.DeviceInfo.SerialNumber", {path: daily, value: daily});
-  declare("Device.Ethernet.Interface.*.MACAddress", {path: daily, value: daily});
-  declare("Device.IP.Interface.*.IPv4Address.*.IPAddress", {path: daily, value: every_ten_minutes});
-  declare("Device.PPP.Interface.*.ExternalIPAddress", {path: daily, value: every_ten_minutes});
-  declare("Device.WiFi.SSID.*.SSID", {path: daily, value: hourly});
-  declare("Device.WiFi.AccessPoint.*.Security.KeyPassphrase", {path: daily, value: hourly});
-  declare("Device.Hosts.Host.*.HostName", {path: hourly, value: hourly});
-  declare("Device.Hosts.Host.*.IPAddress", {path: hourly, value: hourly});
-  declare("Device.Hosts.Host.*.MACAddress", {path: hourly, value: hourly});
-  declare("Device.Hosts.Host.*.Active", {path: hourly, value: hourly});
+  declare("Device.DeviceInfo.HardwareVersion", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.DeviceInfo.SoftwareVersion", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.DeviceInfo.ProductClass", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.DeviceInfo.SerialNumber", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.Ethernet.Interface.*.MACAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.IP.Interface.*.IPv4Address.*.IPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.PPP.Interface.*.ExternalIPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.WiFi.SSID.*.SSID", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.WiFi.AccessPoint.*.Security.KeyPassphrase", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.Hosts.Host.*.HostName", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.Hosts.Host.*.IPAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.Hosts.Host.*.MACAddress", {path: every_ten_minutes, value: every_ten_minutes});
+  declare("Device.Hosts.Host.*.Active", {path: every_ten_minutes, value: every_ten_minutes});
 
-  // Sinal óptico GPON (TP-Link XX530v) para o portal: valor a cada 10 min (leitura barata)
-  declare("Device.Optical.Interface.*.X_TP_GPON_Config.RXPower", {path: daily, value: every_ten_minutes});
-  declare("Device.Optical.Interface.*.X_TP_GPON_Config.TXPower", {path: daily, value: every_ten_minutes});
+  // Sinal óptico GPON (TP-Link XX530v) para o portal
+  declare("Device.Optical.Interface.*.X_TP_GPON_Config.RXPower", {path: hourly, value: every_ten_minutes});
+  declare("Device.Optical.Interface.*.X_TP_GPON_Config.TXPower", {path: hourly, value: every_ten_minutes});
 }
 
 // ==========================================
