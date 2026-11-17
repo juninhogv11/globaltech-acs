@@ -6,7 +6,9 @@
 > ```bash
 > apt install -y docker.io nodejs npm nginx iptables
 > docker run -d --name mongodb --restart unless-stopped -p 127.0.0.1:27017:27017 \
->   -v /var/lib/mongodb-docker:/data/db mongo:4.4.29 --wiredTigerCacheSizeGB 1
+>   -v /var/lib/mongodb-docker:/data/db mongo:4.4.29 --wiredTigerCacheSizeGB 3   # VM com 8 GB
+> printf "w /sys/kernel/mm/transparent_hugepage/enabled - - - - never\n" > /etc/tmpfiles.d/mongodb-thp.conf
+> # serviços genieacs-*: override com After/Wants=docker.service e Restart=always; apt install qemu-guest-agent
 > npm install -g genieacs@1.2.16          # binários em /usr/local/bin
 > ```
 >
