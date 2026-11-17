@@ -1,5 +1,26 @@
 # Migração do servidor GenieACS para Debian 12
 
+> **Como foi feito de verdade (11/2026):** servidor novo em **Debian 13** (172.16.0.137). O host do Proxmox
+> (Xeon E5645) **não tem AVX**, então o MongoDB 5+ não roda. Ficou **MongoDB 4.4.29 em Docker**:
+>
+> ```bash
+> apt install -y docker.io nodejs npm nginx iptables
+> docker run -d --name mongodb --restart unless-stopped -p 127.0.0.1:27017:27017 \
+>   -v /var/lib/mongodb-docker:/data/db mongo:4.4.29 --wiredTigerCacheSizeGB 1
+> npm install -g genieacs@1.2.16          # binários em /usr/local/bin
+> ```
+>
+> Cópia do banco sem arquivo intermediário:
+> `ssh antigo 'mongodump --db genieacs --gzip --archive' | ssh novo 'docker exec -i mongodb mongorestore --gzip --archive --nsInclude "genieacs.*" --drop'`
+>
+> Além do GenieACS vão junto: `/opt/genieacs` (env, sgp.env, ext, limpeza-offline.js), `genieacs-firewall`
+> (`/usr/local/sbin/genieacs-firewall.sh`), nginx (`/etc/nginx/sites-available/default`: porta 7558 = API com chave
+> para o SGP; porta 80 = `/var/www/html/100MB.bin` do teste de velocidade), `/etc/nginx/ssl` e os timers.
+> O PostgreSQL 11 (banco `openacs`) do servidor antigo não é usado e não foi migrado.
+> Quando houver host com AVX: trocar o contêiner por MongoDB 8 (mongodump/mongorestore).
+>
+> O texto abaixo é o plano original (MongoDB 7 sem Docker).
+
 Por que: o servidor atual está em **Debian 10.13** (sem atualizações de segurança desde 06/2024),
 **MongoDB 4.4.15** (sem suporte desde 02/2024) e **Node.js 16.20.2** (sem suporte desde 09/2023).
 O GenieACS é o **1.2.16**.
