@@ -65,7 +65,7 @@ async function perguntar(contexto, mensagens) {
 
   // Modelos pequenos obedecem melhor ao formato quando a regra vem junto da última pergunta
   const ultima = hist[hist.length - 1];
-  const lembrete = "\n\n(Formato: fale com o técnico; no máximo 8 linhas; passos numerados; sem títulos, sem emojis, sem resumo final; não repita os dados.)";
+  const lembrete = "\n\n(Formato: fale com o técnico; no máximo 8 linhas; passos numerados; sem títulos, sem emojis, sem resumo final; não repita os dados. Se um teste ou leitura do portal ajudar, termine com até 2 linhas [[ACAO:...]].)";
   const messages = [
     { role: "system", content: SISTEMA },
     { role: "system", content: "Dados do equipamento (JSON):\n" + JSON.stringify({ equipamento: contexto }) },
