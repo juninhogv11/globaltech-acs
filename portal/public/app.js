@@ -619,8 +619,10 @@ async function pageDevice(id) {
         <dt>ID no ACS</dt><dd><code>${esc(d.id)}</code></dd>
       </dl></div>
     </div>
+    <div class="card diag-card" id="diag-card"><div class="card-head"><h2>Diagnóstico e assistente</h2><span class="muted">analisando…</span></div></div>
     ${speedSection(st, d.online)}
     ${lanSection(lan, d.online)}`;
+  loadDiagnostico(id);
 
   // Teste em andamento (inclusive se a página foi redesenhada no meio dele)
   if (st.running) watchSpeedtest(st.running.id, st.running.type);
@@ -727,6 +729,97 @@ async function pageDevice(id) {
       route(true);
     } catch (ex) { toast(ex.message, true); }
   });
+}
+
+// ---------- Diagnóstico (regras) e assistente (IA) na página do equipamento ----------
+const chats = new Map(); // conversa por equipamento (sobrevive ao redesenho da página)
+const DIAG_ICON = { problema: "✕", atencao: "!", info: "i", ok: "✓" };
+const ACAO_TXT = {
+  refresh: "Atualizar dados", "read-lan": "Ler Wi-Fi e LAN", "wifi-scan": "Verificar interferência",
+  "speedtest-download": "Teste de download", "speedtest-upload": "Teste de upload",
+};
+const SUGESTOES = ["Cliente diz que a internet está lenta", "A internet cai várias vezes ao dia", "Wi-Fi não alcança alguns cômodos", "Cliente está sem internet", "Explique o diagnóstico em linguagem simples para passar ao cliente"];
+
+// Ação segura: usa o mesmo botão da página (com as mesmas confirmações)
+function runAcao(acao) {
+  const sel = acao.startsWith("speedtest-") ? `[data-speed="${acao.slice(10)}"]` : `[data-act="${acao}"]`;
+  const b = view.querySelector(sel);
+  if (!b) return toast("Ação indisponível agora (equipamento offline ou recurso não suportado).", true);
+  b.scrollIntoView({ behavior: "smooth", block: "center" });
+  b.click();
+}
+
+// Texto da IA: escapa HTML; **negrito** e quebras de linha
+const iaHtml = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+
+async function loadDiagnostico(id) {
+  const card = $("#diag-card");
+  if (!card) return;
+  let r;
+  try { r = await api(`/devices/${enc(id)}/diagnostico`); } catch (e) {
+    card.innerHTML = `<div class="card-head"><h2>Diagnóstico e assistente</h2></div><div class="muted">Não foi possível analisar: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!$("#diag-card")) return; // saiu da página
+  const hist = chats.get(id) || [];
+  chats.set(id, hist);
+  card.innerHTML = `
+    <div class="card-head"><h2>Diagnóstico e assistente</h2><span class="muted">${esc(r.resumo)}</span></div>
+    <div class="diag-grid">
+      <ul class="diag-list">${r.achados.map((a) => `
+        <li class="diag-${a.nivel}"><span class="diag-ico">${DIAG_ICON[a.nivel]}</span>
+          <div><b>${esc(a.titulo)}</b> <span class="diag-area">${esc(a.area)}</span>
+          ${a.detalhe ? `<div class="muted">${esc(a.detalhe)}</div>` : ""}
+          ${a.acao ? `<button class="btn sm" data-diag-acao="${esc(a.acao)}">${esc(ACAO_TXT[a.acao] || a.acao)}</button>` : ""}</div></li>`).join("")}
+      </ul>
+      <div class="chat">
+        ${r.assistente ? `
+        <div class="chat-msgs" id="chat-msgs"></div>
+        <div class="chat-sug" id="chat-sug">${SUGESTOES.map((s) => `<button class="btn sm" data-sug="${esc(s)}">${esc(s)}</button>`).join("")}</div>
+        <form class="chat-form" id="chat-form">
+          <input id="chat-in" placeholder="Descreva o problema do cliente…" autocomplete="off" maxlength="1500">
+          <button class="btn primary" type="submit">Perguntar</button>
+        </form>
+        <div class="muted chat-nota">Assistente com IA gratuita: confira antes de agir. Não digite nome, CPF, telefone ou senhas do cliente.</div>`
+        : `<div class="muted" style="padding:12px">Assistente com IA não configurado. O diagnóstico ao lado funciona sem ele.</div>`}
+      </div>
+    </div>`;
+
+  card.querySelectorAll("[data-diag-acao]").forEach((b) => b.addEventListener("click", () => runAcao(b.dataset.diagAcao)));
+  if (!r.assistente) return;
+
+  const box = $("#chat-msgs");
+  const render = () => {
+    box.innerHTML = hist.length ? hist.map((m) => `
+      <div class="msg msg-${m.role}">${m.role === "assistant" ? iaHtml(m.content) : esc(m.content)}
+        ${(m.acoes || []).map((a) => `<button class="btn sm" data-chat-acao="${esc(a)}">${esc(ACAO_TXT[a] || a)}</button>`).join("")}</div>`).join("")
+      : `<div class="muted" style="padding:8px">Descreva o que o cliente relata. O assistente já conhece os dados deste equipamento.</div>`;
+    box.querySelectorAll("[data-chat-acao]").forEach((b) => b.addEventListener("click", () => runAcao(b.dataset.chatAcao)));
+    box.scrollTop = box.scrollHeight;
+    $("#chat-sug").hidden = hist.length > 0;
+  };
+  render();
+
+  const enviar = async (texto) => {
+    texto = texto.trim();
+    if (!texto) return;
+    hist.push({ role: "user", content: texto });
+    hist.push({ role: "assistant", content: "Pensando…", pendente: true });
+    render();
+    try {
+      const resp = await api(`/devices/${enc(id)}/assistente`, {
+        method: "POST", loading: false,
+        body: { mensagens: hist.filter((m) => !m.pendente).map((m) => ({ role: m.role, content: m.content })) },
+      });
+      hist.splice(-1, 1, { role: "assistant", content: resp.texto, acoes: resp.acoes });
+    } catch (e) {
+      hist.splice(-2, 2);
+      toast(e.message, true);
+    }
+    if ($("#chat-msgs") === box) render();
+  };
+  $("#chat-form").addEventListener("submit", (e) => { e.preventDefault(); const i = $("#chat-in"); const t = i.value; i.value = ""; enviar(t); });
+  card.querySelectorAll("[data-sug]").forEach((b) => b.addEventListener("click", () => enviar(b.dataset.sug)));
 }
 
 // ---------- Firmware: arquivos por modelo e atualização ----------

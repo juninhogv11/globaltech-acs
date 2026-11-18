@@ -11,6 +11,8 @@ const models = require("./lib/models");
 const wifibackup = require("./lib/wifibackup");
 const firmware = require("./lib/firmware");
 const backup = require("./lib/backup");
+const diagnostico = require("./lib/diagnostico");
+const assistente = require("./lib/assistente");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
 const WIFI_BACKUP_ALLOW = (process.env.WIFI_BACKUP_ALLOW || "192.168.10.2").split(",").map((s) => s.trim());
@@ -79,6 +81,21 @@ api.get("/api/devices/:id", async (req, res) => {
     firmwareJob: { ...(firmware.history(req.params.id) || {}), lockMinutes: firmware.lockMinutes(req.params.id) },
     root: devices.rootOf(doc),
   });
+});
+
+// Diagnóstico por regras (sem IA) e assistente com IA (só dados técnicos, sem identificar o cliente)
+api.get("/api/devices/:id/diagnostico", async (req, res) => {
+  const [doc, faults] = await Promise.all([nbi.device(req.params.id), nbi.faults()]);
+  const r = diagnostico.diagnosticar(doc, faults);
+  res.json({ achados: r.achados, resumo: r.resumo, assistente: assistente.configurado() });
+});
+
+api.post("/api/devices/:id/assistente", async (req, res) => {
+  const [doc, faults] = await Promise.all([nbi.device(req.params.id), nbi.faults()]);
+  const diag = diagnostico.diagnosticar(doc, faults);
+  const r = await assistente.perguntar(diagnostico.contextoIA(doc, diag), (req.body || {}).mensagens);
+  console.log(new Date().toISOString(), `assistente IA: pergunta sobre ${req.params.id} por ${req.user.user} (${r.usadosHoje}/${r.limiteDia} hoje)`);
+  res.json(r);
 });
 
 const taskResult = (r) => ({ done: r.status === 200, queued: r.status === 202 });
