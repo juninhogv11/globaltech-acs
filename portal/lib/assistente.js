@@ -63,10 +63,14 @@ async function perguntar(contexto, mensagens) {
   if (!hist.length || hist[hist.length - 1].role !== "user") throw bad("Escreva a pergunta.");
   contar();
 
+  // Modelos pequenos obedecem melhor ao formato quando a regra vem junto da última pergunta
+  const ultima = hist[hist.length - 1];
+  const lembrete = "\n\n(Formato: fale com o técnico; no máximo 8 linhas; passos numerados; sem títulos, sem emojis, sem resumo final; não repita os dados.)";
   const messages = [
     { role: "system", content: SISTEMA },
     { role: "system", content: "Dados do equipamento (JSON):\n" + JSON.stringify({ equipamento: contexto }) },
-    ...hist,
+    ...hist.slice(0, -1),
+    { role: "user", content: ultima.content + lembrete },
   ];
   let r, j, modelo, ultimoErro = "";
   for (modelo of IA_MODELOS) {
@@ -74,7 +78,7 @@ async function perguntar(contexto, mensagens) {
       r = await fetch(`${IA_URL}/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${IA_CHAVE}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 450, messages }),
+        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 600, messages }),
         signal: AbortSignal.timeout(40000),
       });
     } catch (e) {
