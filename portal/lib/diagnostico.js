@@ -57,12 +57,21 @@ function diagnosticar(doc, faults) {
   }
 
   // 5. Falhas no ACS
-  const fs = (faults || []).filter((f) => f.device === d.id);
-  for (const f of fs) {
-    const extra = f.code === "cwmp.9805" && /^0\.2\.0 /.test(d.software)
-      ? " No firmware 0.2.0 isso costuma acontecer depois de reinícios (o roteador renumera interfaces). Atualizar para 0.6.0 resolve."
-      : f.code === "preset_loop" ? " As configurações automáticas ficaram repetindo sem parar e o ACS desistiu." : "";
-    add("atencao", "ACS", `Falha no ACS: ${f.code} (canal ${f.channel})`, `${f.message || ""}.${extra}`);
+  // Mesma falha em vários canais vira uma linha só
+  const porCodigo = new Map();
+  for (const f of (faults || []).filter((x) => x.device === d.id)) {
+    const e = porCodigo.get(f.code) || { ...f, canais: [] };
+    e.canais.push(f.channel);
+    porCodigo.set(f.code, e);
+  }
+  for (const f of porCodigo.values()) {
+    let extra = "";
+    if (f.code === "cwmp.9805" && /^0\.2\.0 /.test(d.software)) extra = " No firmware 0.2.0 isso costuma acontecer depois de reinícios (o roteador renumera interfaces). Atualizar para 0.6.0 resolve.";
+    else if (f.code === "preset_loop") {
+      extra = " As configurações automáticas ficaram repetindo sem parar e o ACS desistiu.";
+      if (d.tags.includes("ERRO_SGP") || !d.tags.includes("Provisioned")) extra += " Causa provável: o provisionamento não termina porque o equipamento não está no SGP. Corrija o cadastro e use \"Reprovisionar\".";
+    }
+    add("atencao", "ACS", `Falha no ACS: ${f.code} (${f.canais.join(", ")})`, `${f.message || ""}.${extra}`);
   }
 
   // 6. Firmware
