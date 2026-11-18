@@ -65,7 +65,7 @@ async function perguntar(contexto, mensagens) {
 
   // Modelos pequenos obedecem melhor ao formato quando a regra vem junto da última pergunta
   const ultima = hist[hist.length - 1];
-  const lembrete = "\n\n(Formato: fale com o técnico; no máximo 8 linhas; passos numerados; sem títulos, sem emojis, sem resumo final; não repita os dados. Se um teste ou leitura do portal ajudar, termine com até 2 linhas [[ACAO:...]].)";
+  const lembrete = "\n\n(Formato: fale com o técnico; no máximo 8 linhas; passos numerados; sem títulos, sem emojis, sem resumo final; não repita os dados. Se um teste ou leitura do portal ajudar, termine com até 2 linhas usando só estes códigos: [[ACAO:speedtest-download]] [[ACAO:speedtest-upload]] [[ACAO:wifi-scan]] [[ACAO:read-lan]] [[ACAO:refresh]].)";
   const messages = [
     { role: "system", content: SISTEMA },
     { role: "system", content: "Dados do equipamento (JSON):\n" + JSON.stringify({ equipamento: contexto }) },
@@ -100,8 +100,21 @@ async function perguntar(contexto, mensagens) {
   let texto = String(((((j.choices || [])[0] || {}).message) || {}).content || "").trim();
   // Alguns modelos devolvem o raciocínio entre <think>...</think>
   texto = texto.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-  const acoes = [...new Set([...texto.matchAll(/\[\[ACAO:([a-z-]+)\]\]/g)].map((m) => m[1]).filter((a) => ACOES.includes(a)))];
-  texto = texto.replace(/\[\[ACAO:[a-z-]+\]\][^\n]*\n?/g, "").trim();
+  // [[ACAO:wifi-scan]] ou, se o modelo escrever em texto livre, reconhece pelas palavras
+  const acoes = [];
+  for (const m of texto.matchAll(/\[\[\s*ACAO\s*:\s*([^\]]+)\]\]/gi)) {
+    const t = m[1].trim().toLowerCase();
+    const achadas = ACOES.includes(t) ? [t] : [
+      /upload/.test(t) && "speedtest-upload",
+      /(velocidade|download|speed)/.test(t) && !/upload/.test(t) && "speedtest-download",
+      /(interfer|varredura|vizinh|wifi-scan)/.test(t) && "wifi-scan",
+      /(ler wi-?fi|read-lan|conectados|portas|lan agora)/.test(t) && "read-lan",
+      /(atualiz|refresh)/.test(t) && "refresh",
+    ].filter(Boolean);
+    for (const a of achadas) if (!acoes.includes(a)) acoes.push(a);
+  }
+  acoes.splice(2);
+  texto = texto.replace(/\[\[\s*ACAO[^\]]*\]\][^\n]*\n?/gi, "").trim();
   return { texto: texto || "(sem resposta)", acoes, modelo, usadosHoje: usados, limiteDia: LIMITE_DIA };
 }
 
