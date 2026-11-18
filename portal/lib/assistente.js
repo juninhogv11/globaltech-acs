@@ -3,7 +3,10 @@
 // Recebe só dados técnicos do equipamento (diagnostico.contextoIA): sem SSID, MAC, serial, IP ou código do cliente.
 const IA_URL = (process.env.IA_URL || "").replace(/\/+$/, "");
 const IA_CHAVE = process.env.IA_CHAVE || "";
-const IA_MODELO = process.env.IA_MODELO || "";
+// Pode ser uma lista separada por vírgula: se um modelo estiver sobrecarregado (503), fora do ar (404)
+// ou sem cota (429), tenta o próximo. Ex.: IA_MODELO=gemini-flash-lite-latest,gemini-3.5-flash-lite
+const IA_MODELOS = String(process.env.IA_MODELO || "").split(",").map((s) => s.trim()).filter(Boolean);
+const IA_MODELO = IA_MODELOS[0] || "";
 const LIMITE_DIA = Number(process.env.IA_LIMITE_DIA || 300);
 const ACOES = ["refresh", "read-lan", "wifi-scan", "speedtest-download", "speedtest-upload"];
 
@@ -56,36 +59,42 @@ async function perguntar(contexto, mensagens) {
   if (!hist.length || hist[hist.length - 1].role !== "user") throw bad("Escreva a pergunta.");
   contar();
 
-  let r;
-  try {
-    r = await fetch(`${IA_URL}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${IA_CHAVE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: IA_MODELO,
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [
-          { role: "system", content: SISTEMA },
-          { role: "system", content: "Dados do equipamento (JSON):\n" + JSON.stringify({ equipamento: contexto }) },
-          ...hist,
-        ],
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
-  } catch (e) {
-    usados--;
-    throw bad(`O serviço de IA não respondeu: ${e.message}`, 502);
+  const messages = [
+    { role: "system", content: SISTEMA },
+    { role: "system", content: "Dados do equipamento (JSON):\n" + JSON.stringify({ equipamento: contexto }) },
+    ...hist,
+  ];
+  let r, j, modelo, ultimoErro = "";
+  for (modelo of IA_MODELOS) {
+    try {
+      r = await fetch(`${IA_URL}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${IA_CHAVE}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 700, messages }),
+        signal: AbortSignal.timeout(40000),
+      });
+    } catch (e) {
+      ultimoErro = `não respondeu (${e.message})`;
+      r = null;
+      continue;
+    }
+    j = await r.json().catch(() => ({}));
+    if (r.ok) break;
+    const err = (Array.isArray(j) ? (j[0] || {}).error : j.error) || {};
+    ultimoErro = `HTTP ${r.status}: ${String(err.message || "").slice(0, 150)}`;
+    if (![404, 429, 500, 503].includes(r.status)) break; // erro de chave/pedido: não adianta trocar de modelo
   }
-  const j = await r.json().catch(() => ({}));
-  if (r.status === 429) throw bad("Limite gratuito do serviço de IA atingido agora. Tente de novo em alguns minutos; o diagnóstico continua funcionando.", 429);
-  if (!r.ok) throw bad(`Serviço de IA respondeu HTTP ${r.status}: ${((j.error || {}).message || "").slice(0, 200)}`, 502);
+  if (!r || !r.ok) {
+    usados--;
+    if (r && r.status === 429) throw bad("Limite gratuito do serviço de IA atingido agora. Tente de novo em alguns minutos; o diagnóstico continua funcionando.", 429);
+    throw bad(`Serviço de IA indisponível agora (${ultimoErro}). O diagnóstico continua funcionando.`, 502);
+  }
   let texto = String(((((j.choices || [])[0] || {}).message) || {}).content || "").trim();
   // Alguns modelos devolvem o raciocínio entre <think>...</think>
   texto = texto.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const acoes = [...new Set([...texto.matchAll(/\[\[ACAO:([a-z-]+)\]\]/g)].map((m) => m[1]).filter((a) => ACOES.includes(a)))];
   texto = texto.replace(/\[\[ACAO:[a-z-]+\]\][^\n]*\n?/g, "").trim();
-  return { texto: texto || "(sem resposta)", acoes, usadosHoje: usados, limiteDia: LIMITE_DIA };
+  return { texto: texto || "(sem resposta)", acoes, modelo, usadosHoje: usados, limiteDia: LIMITE_DIA };
 }
 
 module.exports = { configurado, perguntar };
