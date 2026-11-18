@@ -67,8 +67,16 @@ function consultar(filtro, callback) {
       } catch (e) {
         return done(new Error("SGP devolveu resposta que não é JSON"));
       }
-      const c = parsed.contratos && parsed.contratos[0];
-      if (!c) return done(null, null);
+      // Contrato cancelado não vale: o equipamento é comodato e pode estar instalado num cliente novo.
+      // Usa o primeiro contrato que não esteja cancelado; se só houver cancelados, responde
+      // { cancelado: true, ... } (sem login), que a provision trata como "sem contrato".
+      const lista = Array.isArray(parsed.contratos) ? parsed.contratos : [];
+      const cancelado = (x) => Number(x.contratoStatus) === 3 || /cancelad/i.test(String(x.contratoStatusDisplay || ""));
+      const c = lista.find((x) => !cancelado(x));
+      if (!c) {
+        const x = lista[0];
+        return done(null, x ? { cancelado: true, cliente: x.clienteId, contrato: x.contratoId, status: x.contratoStatusDisplay || String(x.contratoStatus) } : null);
+      }
       done(null, {
         cliente: c.clienteId,
         contrato: c.contratoId,

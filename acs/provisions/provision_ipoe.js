@@ -163,6 +163,8 @@ if (serial) {
     auth = r;
     macEncontrado = "serial " + serial;
     log(">>> [ETAPA 4] SGP(serial " + serial + ") => contrato " + r.username);
+  } else if (r && r.cancelado) {
+    log(">>> [ETAPA 4] SGP(serial " + serial + ") => contrato " + r.contrato + " (cliente " + r.cliente + ") está " + r.status + ": ignorado");
   } else {
     log(">>> [ETAPA 4] SGP(serial " + serial + ") => sem contrato");
   }
@@ -177,9 +179,10 @@ for (let i = 0; !sgpErro && i < candidates.length && i < MAX_TENTATIVAS && !auth
     log(">>> [ETAPA 4] SGP(" + candidates[i] + ") ERRO: " + sgpErro);
     break;
   }
-  // Só conta como encontrado se veio um contrato de verdade (com login)
+  // Só conta como encontrado se veio um contrato de verdade (com login) e não cancelado
   const achou = !!(r && r.username);
-  log(">>> [ETAPA 4] SGP(" + candidates[i] + ") => " + (achou ? "contrato " + r.username : "sem contrato"));
+  log(">>> [ETAPA 4] SGP(" + candidates[i] + ") => " + (achou ? "contrato " + r.username
+    : (r && r.cancelado) ? "contrato " + r.contrato + " (cliente " + r.cliente + ") está " + r.status + ": ignorado" : "sem contrato"));
   if (achou) {
     auth = r;
     macEncontrado = candidates[i];
@@ -187,8 +190,16 @@ for (let i = 0; !sgpErro && i < candidates.length && i < MAX_TENTATIVAS && !auth
 }
 
 if (!auth) {
-  log(">>> [PAROU] " + (sgpErro ? "Falha ao consultar o SGP: " + sgpErro : "SGP não encontrou o serial " + serial + " nem os MACs: " + candidates.join(", ")));
+  log(">>> [PAROU] " + (sgpErro ? "Falha ao consultar o SGP: " + sgpErro : "SGP não encontrou contrato ativo para o serial " + serial + " nem os MACs: " + candidates.join(", ")));
   declare("Tags.ERRO_SGP", null, {value: true});
+  // Sem contrato válido (ex.: o antigo foi cancelado e o equipamento foi para outro cliente):
+  // tira o vínculo antigo. Se o SGP deu erro, não mexe (pode ser só instabilidade).
+  if (!sgpErro) {
+    for (let t of declare("Tags.*", {value: 1})) {
+      const name = t.path.split(".")[1];
+      if (/^SGP_(CLIENTE|CONTRATO)_/.test(name)) declare("Tags." + name, null, {value: false});
+    }
+  }
   return;
 }
 
