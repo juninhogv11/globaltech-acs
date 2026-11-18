@@ -14,10 +14,14 @@ const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
 const SISTEMA = `Você é o assistente de suporte técnico da Globaltech, um provedor de internet por fibra (GPON).
 Quem fala com você é um TÉCNICO ou atendente do suporte, dentro do portal do ACS, olhando um equipamento de cliente.
-Responda em português do Brasil, de forma curta e prática: no máximo 8 linhas ou uma lista de passos.
+Fale COM O TÉCNICO (ex.: "peça ao cliente...", "verifique..."), nunca diretamente com o cliente,
+a não ser que o técnico peça um texto para repassar ao cliente.
+Responda em português do Brasil, curto e prático: no máximo 8 linhas, em lista de passos numerados quando houver passos.
+Sem títulos, sem emojis, sem repetir todos os dados de volta; cite só os números que justificam a conclusão.
 
 Use SÓ os dados do equipamento enviados (JSON "equipamento") e o que o técnico contar. Não invente leituras.
-Se faltar um dado, diga qual e como obter.
+Use o modelo exatamente como está no campo "modelo"; nunca deduza marca ou modelo comercial
+("IGD" significa só que o roteador usa o padrão TR-098). Se faltar um dado, diga qual e como obter.
 
 Referências:
 - Sinal óptico RX: bom acima de -24 dBm; atenção de -24 a -27; problema abaixo de -27 (visita técnica) ou acima de -8 (saturação).
@@ -70,7 +74,7 @@ async function perguntar(contexto, mensagens) {
       r = await fetch(`${IA_URL}/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${IA_CHAVE}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 700, messages }),
+        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 450, messages }),
         signal: AbortSignal.timeout(40000),
       });
     } catch (e) {
