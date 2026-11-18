@@ -792,7 +792,8 @@ async function loadDiagnostico(id) {
   const render = () => {
     box.innerHTML = hist.length ? hist.map((m) => `
       <div class="msg msg-${m.role}">${m.role === "assistant" ? iaHtml(m.content) : esc(m.content)}
-        ${(m.acoes || []).map((a) => `<button class="btn sm" data-chat-acao="${esc(a)}">${esc(ACAO_TXT[a] || a)}</button>`).join("")}</div>`).join("")
+        ${(m.acoes || []).map((a) => `<button class="btn sm" data-chat-acao="${esc(a)}">${esc(ACAO_TXT[a] || a)}</button>`).join("")}
+        ${m.via ? `<div class="msg-via">via ${esc(m.via)}</div>` : ""}</div>`).join("")
       : `<div class="muted" style="padding:8px">Descreva o que o cliente relata. O assistente já conhece os dados deste equipamento.</div>`;
     box.querySelectorAll("[data-chat-acao]").forEach((b) => b.addEventListener("click", () => runAcao(b.dataset.chatAcao)));
     box.scrollTop = box.scrollHeight;
@@ -811,7 +812,7 @@ async function loadDiagnostico(id) {
         method: "POST", loading: false,
         body: { mensagens: hist.filter((m) => !m.pendente).map((m) => ({ role: m.role, content: m.content })) },
       });
-      hist.splice(-1, 1, { role: "assistant", content: resp.texto, acoes: resp.acoes });
+      hist.splice(-1, 1, { role: "assistant", content: resp.texto, acoes: resp.acoes, via: resp.provedor });
     } catch (e) {
       hist.splice(-2, 2);
       toast(e.message, true);

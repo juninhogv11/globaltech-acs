@@ -340,3 +340,4 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .fw-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .fw-form input { width: 100%; }
 @media (max-width: 860px) { .fw-form { grid-template-columns: 1fr; } }
+.msg-via { font-size: 11px; color: var(--muted); margin-top: 4px; }

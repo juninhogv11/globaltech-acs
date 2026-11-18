@@ -1,12 +1,22 @@
 "use strict";
 // Assistente de suporte com IA (API compatível com OpenAI: Groq, Gemini, OpenRouter...).
 // Recebe só dados técnicos do equipamento (diagnostico.contextoIA): sem SSID, MAC, serial, IP ou código do cliente.
-const IA_URL = (process.env.IA_URL || "").replace(/\/+$/, "");
-const IA_CHAVE = process.env.IA_CHAVE || "";
-// Pode ser uma lista separada por vírgula: se um modelo estiver sobrecarregado (503), fora do ar (404)
-// ou sem cota (429), tenta o próximo. Ex.: IA_MODELO=gemini-flash-lite-latest,gemini-3.5-flash-lite
-const IA_MODELOS = String(process.env.IA_MODELO || "").split(",").map((s) => s.trim()).filter(Boolean);
-const IA_MODELO = IA_MODELOS[0] || "";
+//
+// Provedores em ordem de preferência: IA_* (1º), IA2_* (2º), IA3_* (3º). Cada um com URL, CHAVE e MODELO
+// (MODELO pode ser lista separada por vírgula). Se um modelo estiver sobrecarregado, sem cota ou fora do ar,
+// tenta o próximo modelo; se a chave do provedor for recusada, pula para o próximo provedor.
+// Ex.: IA_URL=https://generativelanguage.googleapis.com/v1beta/openai  IA_MODELO=gemini-flash-lite-latest,gemini-flash-latest
+//      IA2_URL=https://api.openai.com/v1                              IA2_MODELO=<modelo pequeno da OpenAI>
+const PROVEDORES = ["", "2", "3"].map((n) => {
+  const url = (process.env[`IA${n}_URL`] || "").replace(/\/+$/, "");
+  return {
+    nome: process.env[`IA${n}_NOME`] || (url ? new URL(url).hostname.replace(/^(api|www|generativelanguage)\./, "") : ""),
+    url,
+    chave: process.env[`IA${n}_CHAVE`] || "",
+    modelos: String(process.env[`IA${n}_MODELO`] || "").split(",").map((s) => s.trim()).filter(Boolean),
+    openai: /api\.openai\.com/.test(url),
+  };
+}).filter((p) => p.url && p.chave && p.modelos.length);
 const LIMITE_DIA = Number(process.env.IA_LIMITE_DIA || 300);
 const ACOES = ["refresh", "read-lan", "wifi-scan", "speedtest-download", "speedtest-upload"];
 
@@ -50,7 +60,14 @@ function contar() {
 }
 
 function configurado() {
-  return !!(IA_URL && IA_CHAVE && IA_MODELO);
+  return PROVEDORES.length > 0;
+}
+
+// Corpo do pedido: modelos novos da OpenAI usam max_completion_tokens e não aceitam temperature
+function corpo(p, modelo, messages) {
+  return p.openai
+    ? { model: modelo, max_completion_tokens: 600, messages }
+    : { model: modelo, temperature: 0.2, max_tokens: 600, messages };
 }
 
 // mensagens: [{ role: "user" | "assistant", content }] (histórico curto vindo do navegador)
@@ -72,30 +89,37 @@ async function perguntar(contexto, mensagens) {
     ...hist.slice(0, -1),
     { role: "user", content: ultima.content + lembrete },
   ];
-  let r, j, modelo, ultimoErro = "";
-  for (modelo of IA_MODELOS) {
-    try {
-      r = await fetch(`${IA_URL}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${IA_CHAVE}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 600, messages }),
-        signal: AbortSignal.timeout(40000),
-      });
-    } catch (e) {
-      ultimoErro = `não respondeu (${e.message})`;
-      r = null;
-      continue;
+  let r = null, j, modelo, provedor, todosSemCota = true;
+  const erros = [];
+  fora: for (provedor of PROVEDORES) {
+    for (modelo of provedor.modelos) {
+      try {
+        r = await fetch(`${provedor.url}/chat/completions`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${provedor.chave}`, "Content-Type": "application/json" },
+          body: JSON.stringify(corpo(provedor, modelo, messages)),
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (e) {
+        erros.push(`${provedor.nome}/${modelo}: não respondeu`);
+        r = null;
+        todosSemCota = false;
+        continue;
+      }
+      j = await r.json().catch(() => ({}));
+      if (r.ok) break fora;
+      const err = (Array.isArray(j) ? (j[0] || {}).error : j.error) || {};
+      erros.push(`${provedor.nome}/${modelo}: HTTP ${r.status} ${String(err.message || "").slice(0, 80)}`);
+      if (r.status !== 429) todosSemCota = false;
+      // Chave recusada ou sem crédito: os outros modelos do mesmo provedor também vão falhar
+      if ([401, 402, 403].includes(r.status)) continue fora;
     }
-    j = await r.json().catch(() => ({}));
-    if (r.ok) break;
-    const err = (Array.isArray(j) ? (j[0] || {}).error : j.error) || {};
-    ultimoErro = `HTTP ${r.status}: ${String(err.message || "").slice(0, 150)}`;
-    if (![404, 429, 500, 503].includes(r.status)) break; // erro de chave/pedido: não adianta trocar de modelo
   }
   if (!r || !r.ok) {
     usados--;
-    if (r && r.status === 429) throw bad("Limite gratuito do serviço de IA atingido agora. Tente de novo em alguns minutos; o diagnóstico continua funcionando.", 429);
-    throw bad(`Serviço de IA indisponível agora (${ultimoErro}). O diagnóstico continua funcionando.`, 502);
+    console.error(new Date().toISOString(), "assistente IA: todos falharam:", erros.join(" | "));
+    if (todosSemCota) throw bad("Limite gratuito dos serviços de IA atingido agora. Tente de novo em alguns minutos; o diagnóstico continua funcionando.", 429);
+    throw bad(`Serviço de IA indisponível agora (${erros[erros.length - 1] || "sem resposta"}). O diagnóstico continua funcionando.`, 502);
   }
   let texto = String(((((j.choices || [])[0] || {}).message) || {}).content || "").trim();
   // Alguns modelos devolvem o raciocínio entre <think>...</think>
@@ -115,7 +139,7 @@ async function perguntar(contexto, mensagens) {
   }
   acoes.splice(2);
   texto = texto.replace(/\[\[\s*ACAO[^\]]*\]\][^\n]*\n?/gi, "").trim();
-  return { texto: texto || "(sem resposta)", acoes, modelo, usadosHoje: usados, limiteDia: LIMITE_DIA };
+  return { texto: texto || "(sem resposta)", acoes, provedor: provedor.nome, modelo, tentativasFalhas: erros.length, usadosHoje: usados, limiteDia: LIMITE_DIA };
 }
 
 module.exports = { configurado, perguntar };
