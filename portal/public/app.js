@@ -185,21 +185,47 @@ async function pageDashboard() {
   pageTimer = setInterval(() => route(true), 60000);
 }
 
-// Vários aparelhos voltando quase juntos nos últimos 7 dias = queda de energia no bairro ou problema na rede
+// Quedas das últimas 24 h: só a contagem; a lista abre quando o usuário pede (o estado aberto sobrevive à atualização da página)
+let quedasAbertas = false;
 async function loadRegionais() {
   let r;
-  try { r = await api("/eventos/regionais"); } catch { return; }
+  try { r = await api("/eventos/recentes?horas=24"); } catch { return; }
   const box = $("#regionais");
-  if (!box || !(r.regionais || []).length) return;
+  if (!box || r.indisponivel) return;
+  const ev = r.eventos || [];
+  const aparelhos = new Set(ev.map((e) => e.id)).size;
+  const n = (f) => new Set(ev.filter(f).map((e) => e.id)).size;
+  const religou = n((e) => e.tipo === "religou"), fibra = n((e) => e.tipo === "rede");
+  const energiaOlt = n((e) => e.causaOlt === "energia"), losOlt = n((e) => e.causaOlt === "fibra");
+  const regionais = r.regionais || [];
   box.innerHTML = `<div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h2>Quedas regionais (7 dias)</h2><span class="muted">3 ou mais aparelhos voltando em até 10 min</span></div>
-    <ul class="diag-list">${r.regionais.map((g) => {
-      const forte = g.religaram >= g.soRede;
-      return `<li class="${forte ? "diag-atencao" : "diag-info"}"><span class="diag-ico">!</span><div>
-        <b>${esc(fmtDate(g.inicio))}: ${g.aparelhos} aparelho(s)</b>
-        <div class="muted">${g.religaram} desligaram e religaram${g.religaram ? " (provável falta de energia na região)" : ""} · ${g.soRede} só perderam a fibra/OLT${g.soRede ? " (verificar OLT/rede óptica)" : ""}</div>
-        <div class="muted" style="font-size:12px">${(g.nomes || []).map(esc).join(", ")}${g.aparelhos > (g.nomes || []).length ? "…" : ""}</div></div></li>`;
-    }).join("")}</ul></div>`;
+    <div class="card-head"><h2>Quedas nas últimas 24 h</h2>
+      ${ev.length ? `<button class="btn sm" id="quedas-toggle">${quedasAbertas ? "Esconder lista" : "Ver lista"}</button>` : ""}</div>
+    <div class="quedas-resumo">
+      <div><span class="big-number" style="font-size:34px">${aparelhos}</span> <span class="muted">aparelho(s) caíram${ev.length > aparelhos ? ` · ${ev.length} quedas` : ""}</span></div>
+      ${ev.length ? `<div class="quedas-tags">
+        <span class="ev-tag diag-atencao">${religou} desligaram e religaram</span>
+        <span class="ev-tag diag-info">${fibra} só perderam a fibra/OLT</span>
+        ${energiaOlt ? `<span class="ev-tag diag-atencao">${energiaOlt} falta de energia confirmada pela OLT</span>` : ""}
+        ${losOlt ? `<span class="ev-tag diag-problema">${losOlt} perda de fibra confirmada pela OLT</span>` : ""}
+      </div>` : `<div class="muted">Nenhuma queda (sem pedido do ACS) nas últimas 24 horas.</div>`}
+      ${regionais.map((g) => `<div style="margin-top:6px"><span class="badge warn">Queda regional</span> ${esc(fmtDate(g.inicio))}: ${g.aparelhos} aparelhos ao mesmo tempo
+        <span class="muted">(${g.religaram} religaram${g.religaram ? " — provável falta de energia na região" : ""}; ${g.soRede} só fibra/OLT)</span></div>`).join("")}
+    </div>
+    <div id="quedas-lista" ${quedasAbertas ? "" : "hidden"}>${ev.length ? `<div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Quando</th><th>Aparelho</th><th>O que aconteceu</th><th>OLT</th><th>Sem contato</th></tr></thead>
+      <tbody>${ev.map((e) => `<tr class="click" data-dev="${esc(e.id)}">
+        <td>${esc(fmtDate(e.ts))}<div class="muted" style="font-size:12px">${timeAgo(e.ts)}</div></td>
+        <td>${e.cliente ? `<b class="client-id">${esc(e.cliente)}</b> ` : ""}${esc(e.nome)}<div class="muted" style="font-size:12px">${esc(e.modelo || "")}</div></td>
+        <td><span class="ev-tag ${e.tipo === "religou" ? "diag-atencao" : "diag-info"}">${e.tipo === "religou" ? "Desligou e religou" : "Fibra/OLT caiu e voltou"}</span></td>
+        <td>${e.causaOlt ? `<span class="ev-tag ${e.causaOlt === "energia" ? "diag-atencao" : e.causaOlt === "fibra" ? "diag-problema" : "diag-info"}">${e.causaOlt === "energia" ? "falta de energia" : e.causaOlt === "fibra" ? "perda de fibra" : esc(e.motivoOlt || "outro")}</span>` : `<span class="muted">—</span>`}</td>
+        <td>${e.semContatoMin != null ? durMin(e.semContatoMin) : "—"}</td></tr>`).join("")}</tbody></table></div>` : ""}</div></div>`;
+  const tg = $("#quedas-toggle");
+  if (tg) tg.addEventListener("click", () => {
+    quedasAbertas = !quedasAbertas;
+    $("#quedas-lista").hidden = !quedasAbertas;
+    tg.textContent = quedasAbertas ? "Esconder lista" : "Ver lista";
+  });
 }
 
 const FILTERS = {

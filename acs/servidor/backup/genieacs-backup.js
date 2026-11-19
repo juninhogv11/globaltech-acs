@@ -414,6 +414,17 @@ function eventosRegionais(dias = 7, janelaMin = 10, minimo = 3) {
   }).reverse();
 }
 
+// Quedas (religou / só fibra) nas últimas N horas, de todos os equipamentos, mais recentes primeiro
+function eventosRecentes(horas = 24) {
+  evLoad();
+  const desde = Date.now() - horas * 3600000;
+  const out = [];
+  for (const [id, lista] of Object.entries(ev.eventos)) {
+    for (const x of lista) if ((x.tipo === "religou" || x.tipo === "rede") && Date.parse(x.ts) >= desde) out.push({ id, ...x });
+  }
+  return out.sort((a, b) => b.ts.localeCompare(a.ts));
+}
+
 // ---------- API para o portal ----------
 function serve() {
   // Coletor de eventos: lê o log agora e a cada minuto
@@ -437,6 +448,11 @@ function serve() {
       if (req.method === "GET" && pathname === "/eventos/regionais") {
         const q = new URL(req.url, "http://x").searchParams;
         return send(res, 200, { regionais: eventosRegionais(Number(q.get("dias")) || 7) });
+      }
+      if (req.method === "GET" && pathname === "/eventos/recentes") {
+        const q = new URL(req.url, "http://x").searchParams;
+        const horas = Math.min(Math.max(Number(q.get("horas")) || 24, 1), 24 * 45);
+        return send(res, 200, { horas, eventos: eventosRecentes(horas), regionais: eventosRegionais(horas / 24) });
       }
       const me = pathname.match(/^\/eventos\/(.+)$/);
       if (req.method === "GET" && me) {

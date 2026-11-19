@@ -116,6 +116,25 @@ async function eventosDe(id, doc) {
 api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id, await nbi.device(req.params.id))));
 api.post("/api/olts/coletar", async (req, res) => { await oltcoleta.coletar(true); res.json(oltcoleta.resumo()); });
 
+// Quedas das últimas N horas (padrão 24): contagem para o Dashboard e lista sob demanda
+api.get("/api/eventos/recentes", async (req, res) => {
+  if (!backup.configured()) return res.json({ horas: 24, eventos: [], regionais: [], indisponivel: true });
+  const horas = Number(new URL(req.url, "http://x").searchParams.get("horas")) || 24;
+  const r = await backup.agent("GET", `/eventos/recentes?horas=${horas}`, undefined, 10000).catch(() => null);
+  if (!r) return res.json({ horas, eventos: [], regionais: [], indisponivel: true });
+  const byId = new Map((await devices.all()).map((d) => [d.id, d]));
+  for (const e of r.eventos) {
+    const d = byId.get(e.id);
+    e.nome = d ? d.ssid || d.serial : e.id;
+    e.cliente = d ? d.sgpCliente : "";
+    e.modelo = d ? d.model : "";
+    if (d) {
+      try { oltcoleta.confirmarEventos([e], await oltcoleta.onuDoAparelho(d, false)); } catch {}
+    }
+  }
+  res.json(r);
+});
+
 api.get("/api/eventos/regionais", async (req, res) => {
   if (!backup.configured()) return res.json({ regionais: [] });
   const r = await backup.agent("GET", "/eventos/regionais?dias=7", undefined, 10000).catch(() => ({ regionais: [] }));
