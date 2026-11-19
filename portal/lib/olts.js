@@ -128,7 +128,7 @@ async function testar(id) {
 }
 
 // Comandos SOMENTE de leitura (para levantar o formato das saídas de cada fabricante)
-const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface gpon \S+|environment inhibit-alarms)$/i;
+const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms)$/i;
 async function lerComandos(id, comandos) {
   const o = buscar(id);
   const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 15);
