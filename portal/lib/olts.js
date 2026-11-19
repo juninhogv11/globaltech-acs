@@ -131,7 +131,7 @@ async function testar(id) {
 const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms)$/i;
 async function lerComandos(id, comandos) {
   const o = buscar(id);
-  const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 15);
+  const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 40);
   if (!lista.length) throw bad("Informe os comandos.");
   const proibido = lista.find((c) => !LEITURA_RE.test(c));
   if (proibido) throw bad(`Comando não permitido (só leitura): ${proibido}`);

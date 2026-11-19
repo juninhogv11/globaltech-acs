@@ -862,20 +862,32 @@ async function loadEventos(id) {
   const ev = r.eventos || [];
   const sem7 = ev.filter((e) => Date.now() - Date.parse(e.ts) < 7 * 86400000);
   const n = (t) => sem7.filter((e) => e.tipo === t).length;
+  const onu = r.onu;
+  const CAUSA = { energia: ["Falta de energia (dying gasp)", "diag-atencao"], fibra: ["Perda de fibra (LOS)", "diag-problema"], outro: ["Outro motivo", "diag-info"] };
+  const oltQuedas = onu ? (onu.historico || []).slice(0, 10) : [];
   card.innerHTML = `
     <div class="card-head"><h2>Quedas e reinícios</h2>
       <span class="muted">${r.indisponivel ? "histórico indisponível agora" : `últimos 7 dias: ${n("religou")} religou · ${n("rede")} fibra/OLT · ${n("acs") + n("firmware")} pedidos pelo ACS`}</span></div>
+    ${onu ? `<div class="olt-linha"><b>OLT ${esc(onu.oltNome)}</b> · ONU <code>${esc(onu.index)}</code>${onu.sn ? ` · ${esc(onu.sn)}` : ""} ·
+        ${onu.online ? `<span class="badge good">online na OLT</span>` : `<span class="badge bad">${esc(onu.causa === "energia" ? "sem energia (dying gasp)" : onu.causa === "fibra" ? "sem fibra (LOS)" : onu.estadoOlt)}</span>`}
+        ${onu.rx ? ` · RX ${onu.rx} dBm` : ""} <span class="muted">· lido ${timeAgo(onu.visto)}</span></div>
+      ${oltQuedas.length ? `<details style="margin:6px 0 10px"><summary>Quedas registradas pela OLT (${onu.historico.length})</summary>
+        <table style="margin-top:6px"><thead><tr><th>Caiu</th><th>Voltou</th><th>Causa (OLT)</th></tr></thead><tbody>${oltQuedas.map((q) => `<tr>
+          <td>${esc(fmtDate(q.caiu))}</td><td>${q.voltou ? esc(fmtDate(q.voltou)) : "—"}</td>
+          <td><span class="ev-tag ${(CAUSA[q.causa] || CAUSA.outro)[1]}">${esc((CAUSA[q.causa] || CAUSA.outro)[0])}</span> <span class="muted">${esc(q.motivo || "")}</span></td></tr>`).join("")}</tbody></table></details>` : ""}`
+      : `<div class="muted" style="font-size:12.5px;margin-bottom:8px">ONU não encontrada nas OLTs cadastradas (cadastre a OLT em Configuração → OLTs).</div>`}
     ${ev.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Quando</th><th>O que aconteceu</th><th>Sem contato antes</th><th>Eventos recebidos</th></tr></thead>
       <tbody>${ev.map((e) => {
         const [txt, cls, dica] = EV_TIPO[e.tipo] || [e.tipo, "", ""];
         return `<tr><td title="${esc(fmtDate(e.ts))}">${esc(fmtDate(e.ts))}<div class="muted" style="font-size:12px">${timeAgo(e.ts)}</div></td>
-          <td><span class="ev-tag ${cls}">${esc(txt)}</span><div class="muted" style="font-size:12px">${esc(dica)}</div></td>
+          <td><span class="ev-tag ${cls}">${esc(txt)}</span>${e.causaOlt ? ` <span class="ev-tag ${e.causaOlt === "energia" ? "diag-atencao" : e.causaOlt === "fibra" ? "diag-problema" : "diag-info"}">OLT: ${esc(e.causaOlt === "energia" ? "falta de energia" : e.causaOlt === "fibra" ? "perda de fibra" : e.motivoOlt || "outro")}</span>` : ""}
+            <div class="muted" style="font-size:12px">${esc(e.causaOlt === "energia" ? "Confirmado pela OLT (dying gasp): a ONU ficou sem energia." : e.causaOlt === "fibra" ? "Confirmado pela OLT (LOS): a ONU perdeu o sinal da fibra." : dica)}</div></td>
           <td>${e.semContatoMin != null && e.semContatoMin > 10 ? `<b>${durMin(e.semContatoMin)}</b>` : durMin(e.semContatoMin)}</td>
           <td><code style="font-size:12px">${esc(e.eventos)}</code></td></tr>`;
       }).join("")}</tbody></table></div>`
       : `<div class="empty">${r.indisponivel ? "Não foi possível consultar o histórico no servidor do ACS." : "Nenhum reinício registrado (histórico desde 17/11/2026, guarda 45 dias)."}</div>`}
-    <p class="muted" style="font-size:12px;margin:10px 0 0">O ACS não sabe diferenciar falta de energia de tirar da tomada. Para confirmar falta de energia na ONU, veja o alarme <i>dying gasp</i> na OLT.</p>`;
+    <p class="muted" style="font-size:12px;margin:10px 0 0">A causa "OLT" vem do dying gasp/LOS lido nas OLTs cadastradas (a cada 10 min). Sem ela, o ACS sozinho não diferencia falta de energia de tirar da tomada.</p>`;
 }
 
 // ---------- Firmware: arquivos por modelo e atualização ----------
@@ -1265,29 +1277,42 @@ async function restoreDialog(b) {
 
 // ---------- OLTs: cadastro e teste de conexão ----------
 async function pageOlts() {
-  const { olts, tipos } = await api("/olts");
+  const { olts, tipos, coleta } = await api("/olts");
+  const col = (id) => {
+    const c = ((coleta || {}).coletas || {})[id];
+    if (!c) return `<span class="muted">ainda não lida</span>`;
+    if (!c.ok) return `<span class="badge bad">erro</span> <span class="muted">${esc(c.erro || "")}</span>`;
+    return `${c.onus} ONUs · <b style="color:var(--good)">${c.online}</b> online<br><span class="muted">offline: ${c.energia} sem energia · ${c.fibra} sem fibra · ${c.onus - c.online - c.energia - c.fibra} outros</span>
+      ${c.offsetMin && Math.abs(c.offsetMin) > 5 ? `<br><span style="color:var(--warn);font-size:12px">relógio da OLT ${c.offsetMin > 0 ? "adiantado" : "atrasado"} ${Math.round(Math.abs(c.offsetMin) / 60)} h (corrigido)</span>` : ""}
+      <div class="muted" style="font-size:11.5px">${timeAgo(c.em)}</div>`;
+  };
   const teste = (t) => !t ? `<span class="muted">não testada</span>` : `
     <div>${t.snmp && t.snmp.ok ? `<span class="badge good">SNMP ok</span> <span class="muted">${esc(t.snmp.nome || "")}</span>` : `<span class="badge bad">SNMP</span> <span class="muted">${esc((t.snmp || {}).erro || "")}</span>`}</div>
     <div style="margin-top:4px">${t.telnet && t.telnet.ok ? `<span class="badge good">Telnet ok</span> <span class="muted"><code>${esc(t.telnet.prompt)}</code></span>${t.telnet.enable ? ` <span class="badge ${t.telnet.enable === "ok" ? "good" : "bad"}">enable ${t.telnet.enable === "ok" ? "ok" : ""}</span>${t.telnet.enable !== "ok" ? ` <span class="muted">${esc(t.telnet.enable)}</span>` : ""}` : ""}` : `<span class="badge bad">Telnet</span> <span class="muted">${esc((t.telnet || {}).erro || "")}</span>`}</div>
     <div class="muted" style="font-size:11.5px">${timeAgo(t.em)}</div>`;
   view.innerHTML = `
     <div class="page-head"><h1>OLTs</h1><span class="muted">${olts.length} cadastrada(s)</span>
-      <button class="btn primary" id="olt-nova" style="margin-left:auto">Cadastrar OLT</button></div>
+      <button class="btn" id="olt-coletar" style="margin-left:auto">Ler ONUs agora</button>
+      <button class="btn primary" id="olt-nova">Cadastrar OLT</button></div>
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th></th></tr></thead>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min)</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
         <td>${esc(o.protocolo === "ssh" ? "SSH" : "Telnet")} · porta ${o.telnetPorta}<br><span class="muted">${esc(o.usuario || "sem usuário")} ${o.temSenha ? "· senha ••••••" : "· sem senha"}${o.temSenhaAdmin ? " · admin ••••••" : ""}</span></td>
         <td>${teste(o.ultimoTeste)}</td>
+        <td>${col(o.id)}</td>
         <td style="white-space:nowrap"><button class="btn sm" data-olt-testar="${esc(o.id)}">Testar</button>
           <button class="btn sm" data-olt-editar="${esc(o.id)}">Editar</button>
           <button class="btn sm danger" data-olt-apagar="${esc(o.id)}">Apagar</button></td></tr>`).join("")}</tbody>
     </table></div>` : `<div class="empty">Nenhuma OLT cadastrada.</div>`}</div>`;
 
   $("#olt-nova").addEventListener("click", () => oltForm(null, tipos));
+  $("#olt-coletar").addEventListener("click", async () => {
+    try { await api("/olts/coletar", { method: "POST", loading: "Lendo as ONUs nas OLTs (pode levar até 1 min)…" }); toast("Leitura concluída."); route(true); } catch (e) { toast(e.message, true); }
+  });
   view.querySelectorAll("[data-olt-editar]").forEach((b) => b.addEventListener("click", () => oltForm(olts.find((o) => o.id === b.dataset.oltEditar), tipos)));
   view.querySelectorAll("[data-olt-testar]").forEach((b) => b.addEventListener("click", async () => {
     try {

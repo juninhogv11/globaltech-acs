@@ -17,7 +17,7 @@ const tempo = (ms) => {
   return h < 48 ? `${h} h` : `${Math.round(h / 24)} dias`;
 };
 
-function diagnosticar(doc, faults, eventos = []) {
+function diagnosticar(doc, faults, eventos = [], onu = null) {
   const d = devices.normalize(doc);
   const info = lan.lanInfo(doc);
   const st = speedtest.info(doc);
@@ -61,6 +61,22 @@ function diagnosticar(doc, faults, eventos = []) {
   }
   if (rede.length >= 3) {
     add("atencao", "Fibra", `Conexão com a OLT caiu e voltou ${rede.length} vezes em 7 dias`, "O equipamento continuou ligado, mas perdeu a fibra/OLT. Verifique a OLT (alarmes de LOS/dying gasp) e a rede óptica do cliente.");
+  }
+
+  // 3c. O que a OLT diz (coleta por Telnet a cada 10 min)
+  if (onu) {
+    const onde = `OLT ${onu.oltNome}, ONU ${onu.index}`;
+    if (!onu.online) {
+      const porque = onu.causa === "energia" ? "sem energia (dying gasp): a ONU avisou a OLT que ficou sem energia"
+        : onu.causa === "fibra" ? "sem sinal de fibra (LOS): fibra rompida, conector solto ou ONU desligada da fibra" : `offline (${onu.motivo || onu.estadoOlt})`;
+      add(onu.causa === "fibra" ? "problema" : "atencao", "OLT", `OLT: ONU ${porque.split(":")[0]}`, `${onde}. ${porque.includes(":") ? porque.split(":").slice(1).join(":").trim() + "." : ""}`);
+    } else {
+      add("ok", "OLT", "ONU online na OLT", `${onde}${onu.rx ? ` · RX na OLT ${onu.rx} dBm` : ""}.`);
+    }
+    const q7 = (onu.historico || []).filter((x) => ago(x.caiu) < 7 * 24 * H);
+    const en = q7.filter((x) => x.causa === "energia").length, fi = q7.filter((x) => x.causa === "fibra").length;
+    if (en >= 2) add("atencao", "Energia", `OLT confirmou ${en} quedas por falta de energia em 7 dias`, "Dying gasp: a ONU desligou por falta de energia. Verifique tomada, estabilizador/nobreak e a rede elétrica do cliente.");
+    if (fi >= 2) add("atencao", "Fibra", `OLT registrou ${fi} quedas por perda de sinal (LOS) em 7 dias`, "Fibra/conector instável: verifique a drop, o conector e a caixa de atendimento.");
   }
 
   // 4. Provisionamento e SGP

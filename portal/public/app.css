@@ -348,3 +348,5 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .olt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-top: 10px; }
 .olt-form input, .olt-form select { width: 100%; }
 .olt-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.olt-linha { font-size: 13.5px; padding: 8px 10px; background: var(--bg); border-radius: 8px; margin-bottom: 8px; }
+.ev-tag.diag-problema { color: var(--bad); }

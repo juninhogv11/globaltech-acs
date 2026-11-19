@@ -13,6 +13,8 @@ const firmware = require("./lib/firmware");
 const backup = require("./lib/backup");
 const diagnostico = require("./lib/diagnostico");
 const olts = require("./lib/olts");
+const oltcoleta = require("./lib/oltcoleta");
+oltcoleta.iniciar();
 const assistente = require("./lib/assistente");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
@@ -86,23 +88,33 @@ api.get("/api/devices/:id", async (req, res) => {
 
 // Quedas e reinícios do equipamento (coletados do log do GenieACS pela API do servidor do ACS).
 // Reinício até 60 min depois de um comando de firmware é marcado como "firmware" (a TP-Link não avisa o motivo).
-async function eventosDe(id) {
+// doc (opcional): documento do aparelho, para ligar à ONU na OLT e confirmar a causa de cada queda
+async function eventosDe(id, doc) {
   if (!backup.configured()) return { eventos: [], indisponivel: true };
+  let r;
   try {
-    const r = await backup.agent("GET", "/eventos/" + encodeURIComponent(id), undefined, 10000);
+    r = await backup.agent("GET", "/eventos/" + encodeURIComponent(id), undefined, 10000);
     const fj = firmware.history(id) || {};
     const fwAt = Date.parse(fj.at || 0);
     for (const e of r.eventos) {
       const t = Date.parse(e.ts);
       if (e.tipo === "religou" && fwAt && t >= fwAt && t - fwAt < 3600000) e.tipo = "firmware";
     }
-    return r;
   } catch (e) {
-    return { eventos: [], indisponivel: true, erro: e.message };
+    r = { eventos: [], indisponivel: true, erro: e.message };
   }
+  if (doc) {
+    try {
+      const onu = await oltcoleta.onuDoAparelho(devices.normalize(doc), true);
+      oltcoleta.confirmarEventos(r.eventos, onu);
+      r.onu = onu;
+    } catch (e) { r.erroOlt = e.message; }
+  }
+  return r;
 }
 
-api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id)));
+api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id, await nbi.device(req.params.id))));
+api.post("/api/olts/coletar", async (req, res) => { await oltcoleta.coletar(); res.json(oltcoleta.resumo()); });
 
 api.get("/api/eventos/regionais", async (req, res) => {
   if (!backup.configured()) return res.json({ regionais: [] });
@@ -115,14 +127,16 @@ api.get("/api/eventos/regionais", async (req, res) => {
 
 // Diagnóstico por regras (sem IA) e assistente com IA (só dados técnicos, sem identificar o cliente)
 api.get("/api/devices/:id/diagnostico", async (req, res) => {
-  const [doc, faults, ev] = await Promise.all([nbi.device(req.params.id), nbi.faults(), eventosDe(req.params.id)]);
-  const r = diagnostico.diagnosticar(doc, faults, ev.eventos);
+  const doc = await nbi.device(req.params.id);
+  const [faults, ev] = await Promise.all([nbi.faults(), eventosDe(req.params.id, doc)]);
+  const r = diagnostico.diagnosticar(doc, faults, ev.eventos, ev.onu);
   res.json({ achados: r.achados, resumo: r.resumo, assistente: assistente.configurado() });
 });
 
 api.post("/api/devices/:id/assistente", async (req, res) => {
-  const [doc, faults, ev] = await Promise.all([nbi.device(req.params.id), nbi.faults(), eventosDe(req.params.id)]);
-  const diag = diagnostico.diagnosticar(doc, faults, ev.eventos);
+  const doc = await nbi.device(req.params.id);
+  const [faults, ev] = await Promise.all([nbi.faults(), eventosDe(req.params.id, doc)]);
+  const diag = diagnostico.diagnosticar(doc, faults, ev.eventos, ev.onu);
   const r = await assistente.perguntar(diagnostico.contextoIA(doc, diag), (req.body || {}).mensagens);
   console.log(new Date().toISOString(), `assistente IA: pergunta sobre ${req.params.id} por ${req.user.user} (${r.usadosHoje}/${r.limiteDia} hoje)`);
   res.json(r);
@@ -393,7 +407,7 @@ api.delete("/api/faults/:id", async (req, res) => {
 });
 
 // ---------- OLTs (cadastro; senha e community criptografadas e nunca devolvidas) ----------
-api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS }));
+api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS, coleta: oltcoleta.resumo() }));
 
 api.post("/api/olts", async (req, res) => {
   const r = olts.salvar(req.body || {}, req.user.user);
