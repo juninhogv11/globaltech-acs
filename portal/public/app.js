@@ -874,7 +874,7 @@ async function loadEventos(id) {
       ${oltQuedas.length ? `<details style="margin:6px 0 10px"><summary>Quedas registradas pela OLT (${onu.historico.length})</summary>
         <table style="margin-top:6px"><thead><tr><th>Caiu</th><th>Voltou</th><th>Causa (OLT)</th></tr></thead><tbody>${oltQuedas.map((q) => `<tr>
           <td>${esc(fmtDate(q.caiu))}</td><td>${q.voltou ? esc(fmtDate(q.voltou)) : "—"}</td>
-          <td><span class="ev-tag ${(CAUSA[q.causa] || CAUSA.outro)[1]}">${esc((CAUSA[q.causa] || CAUSA.outro)[0])}</span> <span class="muted">${esc(q.motivo || "")}</span></td></tr>`).join("")}</tbody></table></details>` : ""}`
+          <td>${q.pedidoAcs ? `<span class="ev-tag diag-ok">Reinício pedido pelo ACS${q.pedidoAcs === "firmware" ? " (firmware)" : ""}</span>` : `<span class="ev-tag ${(CAUSA[q.causa] || CAUSA.outro)[1]}">${esc((CAUSA[q.causa] || CAUSA.outro)[0])}</span>`} <span class="muted">${esc(q.motivo || "")}</span></td></tr>`).join("")}</tbody></table></details>` : ""}`
       : `<div class="muted" style="font-size:12.5px;margin-bottom:8px">ONU não encontrada nas OLTs cadastradas (cadastre a OLT em Configuração → OLTs).</div>`}
     ${ev.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Quando</th><th>O que aconteceu</th><th>Sem contato antes</th><th>Eventos recebidos</th></tr></thead>

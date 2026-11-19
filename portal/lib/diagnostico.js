@@ -73,7 +73,7 @@ function diagnosticar(doc, faults, eventos = [], onu = null) {
     } else {
       add("ok", "OLT", "ONU online na OLT", `${onde}${onu.rx ? ` · RX na OLT ${onu.rx} dBm` : ""}.`);
     }
-    const q7 = (onu.historico || []).filter((x) => ago(x.caiu) < 7 * 24 * H);
+    const q7 = (onu.historico || []).filter((x) => !x.pedidoAcs && ago(x.caiu) < 7 * 24 * H);
     const en = q7.filter((x) => x.causa === "energia").length, fi = q7.filter((x) => x.causa === "fibra").length;
     if (en >= 2) add("atencao", "Energia", `OLT confirmou ${en} quedas por falta de energia em 7 dias`, "Dying gasp: a ONU desligou por falta de energia. Verifique tomada, estabilizador/nobreak e a rede elétrica do cliente.");
     if (fi >= 2) add("atencao", "Fibra", `OLT registrou ${fi} quedas por perda de sinal (LOS) em 7 dias`, "Fibra/conector instável: verifique a drop, o conector e a caixa de atendimento.");

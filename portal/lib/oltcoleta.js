@@ -55,13 +55,13 @@ async function coletarZte(o) {
     estadoOlt: x.estadoOlt, causa: /working/i.test(x.estadoOlt) ? null : causaDe(x.estadoOlt) || "outro",
   }));
 }
-// Histórico de uma ONU ZTE (10 últimas quedas, horário da OLT = horário de Brasília)
+// Histórico de uma ONU ZTE (10 últimas quedas). O relógio da C610 está em UTC ("show clock" -> "15:06:43 UTC").
 async function historicoZte(o, index) {
   const r = await olts.lerComandos(o.id, [`show gpon onu detail-info gpon_onu-${index}`]);
   const out = [];
   for (const l of r.saidas[0].saida.split("\n")) {
     const m = l.trim().match(/^\d+\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+(\S+)/);
-    if (m && !/^0000/.test(m[2])) out.push({ caiu: new Date(m[2].replace(" ", "T") + "-03:00").toISOString(), voltou: null, motivo: m[3], causa: causaDe(m[3]) || "outro", fonte: "olt" });
+    if (m && !/^0000/.test(m[2])) out.push({ caiu: new Date(m[2].replace(" ", "T") + "Z").toISOString(), voltou: null, motivo: m[3], causa: causaDe(m[3]) || "outro", fonte: "olt" });
   }
   return out;
 }
@@ -209,11 +209,18 @@ async function onuDoAparelho(device, comHistoricoZte = false) {
 // entre o último contato antes do evento (com folga de 15 min) e 5 min depois dele.
 function confirmarEventos(eventos, onu) {
   if (!onu) return eventos;
+  // Reinício pedido pelo ACS (portal, reboot periódico, firmware) também aparece na OLT como queda
+  // (na ZTE como "LOSi"): marca essas quedas para não contarem como problema de fibra/energia.
+  for (const q of onu.historico || []) {
+    const c = Date.parse(q.caiu);
+    const e = eventos.find((x) => (x.tipo === "acs" || x.tipo === "firmware") && Date.parse(x.ts) >= c - 120000 && Date.parse(x.ts) - c <= 20 * 60000);
+    if (e) q.pedidoAcs = e.tipo;
+  }
   for (const e of eventos) {
     if (e.tipo !== "religou" && e.tipo !== "rede") continue;
     const t = Date.parse(e.ts);
     const ini = t - ((e.semContatoMin || 10) + 15) * 60000, fim = t + 5 * 60000;
-    const q = onu.historico.find((x) => { const c = Date.parse(x.caiu); return c >= ini && c <= fim; });
+    const q = onu.historico.find((x) => { const c = Date.parse(x.caiu); return !x.pedidoAcs && c >= ini && c <= fim; });
     if (q) { e.causaOlt = q.causa; e.motivoOlt = q.motivo; }
   }
   return eventos;
