@@ -83,16 +83,45 @@ api.get("/api/devices/:id", async (req, res) => {
   });
 });
 
+// Quedas e reinícios do equipamento (coletados do log do GenieACS pela API do servidor do ACS).
+// Reinício até 60 min depois de um comando de firmware é marcado como "firmware" (a TP-Link não avisa o motivo).
+async function eventosDe(id) {
+  if (!backup.configured()) return { eventos: [], indisponivel: true };
+  try {
+    const r = await backup.agent("GET", "/eventos/" + encodeURIComponent(id), undefined, 10000);
+    const fj = firmware.history(id) || {};
+    const fwAt = Date.parse(fj.at || 0);
+    for (const e of r.eventos) {
+      const t = Date.parse(e.ts);
+      if (e.tipo === "religou" && fwAt && t >= fwAt && t - fwAt < 3600000) e.tipo = "firmware";
+    }
+    return r;
+  } catch (e) {
+    return { eventos: [], indisponivel: true, erro: e.message };
+  }
+}
+
+api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id)));
+
+api.get("/api/eventos/regionais", async (req, res) => {
+  if (!backup.configured()) return res.json({ regionais: [] });
+  const r = await backup.agent("GET", "/eventos/regionais?dias=7", undefined, 10000).catch(() => ({ regionais: [] }));
+  // Nome (SSID) dos aparelhos para o técnico reconhecer a região
+  const byId = new Map((await devices.all()).map((d) => [d.id, d]));
+  for (const g of r.regionais) g.nomes = g.ids.slice(0, 12).map((id) => (byId.get(id) || {}).ssid || id);
+  res.json(r);
+});
+
 // Diagnóstico por regras (sem IA) e assistente com IA (só dados técnicos, sem identificar o cliente)
 api.get("/api/devices/:id/diagnostico", async (req, res) => {
-  const [doc, faults] = await Promise.all([nbi.device(req.params.id), nbi.faults()]);
-  const r = diagnostico.diagnosticar(doc, faults);
+  const [doc, faults, ev] = await Promise.all([nbi.device(req.params.id), nbi.faults(), eventosDe(req.params.id)]);
+  const r = diagnostico.diagnosticar(doc, faults, ev.eventos);
   res.json({ achados: r.achados, resumo: r.resumo, assistente: assistente.configurado() });
 });
 
 api.post("/api/devices/:id/assistente", async (req, res) => {
-  const [doc, faults] = await Promise.all([nbi.device(req.params.id), nbi.faults()]);
-  const diag = diagnostico.diagnosticar(doc, faults);
+  const [doc, faults, ev] = await Promise.all([nbi.device(req.params.id), nbi.faults(), eventosDe(req.params.id)]);
+  const diag = diagnostico.diagnosticar(doc, faults, ev.eventos);
   const r = await assistente.perguntar(diagnostico.contextoIA(doc, diag), (req.body || {}).mensagens);
   console.log(new Date().toISOString(), `assistente IA: pergunta sobre ${req.params.id} por ${req.user.user} (${r.usadosHoje}/${r.limiteDia} hoje)`);
   res.json(r);

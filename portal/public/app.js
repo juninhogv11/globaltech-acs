@@ -143,6 +143,7 @@ async function pageDashboard() {
       <a class="stat orange" href="#/devices?f=offline"><div><small>Offline</small><b>${s.offline}</b></div>${ICONS.offline}</a>
       <a class="stat red" href="#/faults"><div><small>Falhas ativas</small><b>${s.faults}</b></div>${ICONS.faults}</a>
     </div>
+    <div id="regionais"></div>
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><h2>Sinal PON (RX)</h2><span class="muted">${optical} ONUs com leitura</span></div>
@@ -179,8 +180,26 @@ async function pageDashboard() {
     [s.signal.good, s.signal.warn, s.signal.bad, s.signal.none],
     [COLORS.good, COLORS.warn, COLORS.bad, COLORS.none]);
   doughnut($("#c-models"), s.models.map((m) => m.label), s.models.map((m) => m.count), PALETTE);
+  loadRegionais();
 
   pageTimer = setInterval(() => route(true), 60000);
+}
+
+// Vários aparelhos voltando quase juntos nos últimos 7 dias = queda de energia no bairro ou problema na rede
+async function loadRegionais() {
+  let r;
+  try { r = await api("/eventos/regionais"); } catch { return; }
+  const box = $("#regionais");
+  if (!box || !(r.regionais || []).length) return;
+  box.innerHTML = `<div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h2>Quedas regionais (7 dias)</h2><span class="muted">3 ou mais aparelhos voltando em até 10 min</span></div>
+    <ul class="diag-list">${r.regionais.map((g) => {
+      const forte = g.religaram >= g.soRede;
+      return `<li class="${forte ? "diag-atencao" : "diag-info"}"><span class="diag-ico">!</span><div>
+        <b>${esc(fmtDate(g.inicio))}: ${g.aparelhos} aparelho(s)</b>
+        <div class="muted">${g.religaram} desligaram e religaram${g.religaram ? " (provável falta de energia na região)" : ""} · ${g.soRede} só perderam a fibra/OLT${g.soRede ? " (verificar OLT/rede óptica)" : ""}</div>
+        <div class="muted" style="font-size:12px">${(g.nomes || []).map(esc).join(", ")}${g.aparelhos > (g.nomes || []).length ? "…" : ""}</div></div></li>`;
+    }).join("")}</ul></div>`;
 }
 
 const FILTERS = {
@@ -620,9 +639,11 @@ async function pageDevice(id) {
       </dl></div>
     </div>
     <div class="card diag-card" id="diag-card"><div class="card-head"><h2>Diagnóstico e assistente</h2><span class="muted">analisando…</span></div></div>
+    <div class="card diag-card" id="ev-card"><div class="card-head"><h2>Quedas e reinícios</h2><span class="muted">carregando…</span></div></div>
     ${speedSection(st, d.online)}
     ${lanSection(lan, d.online)}`;
   loadDiagnostico(id);
+  loadEventos(id);
 
   // Teste em andamento (inclusive se a página foi redesenhada no meio dele)
   if (st.running) watchSpeedtest(st.running.id, st.running.type);
@@ -821,6 +842,40 @@ async function loadDiagnostico(id) {
   };
   $("#chat-form").addEventListener("submit", (e) => { e.preventDefault(); const i = $("#chat-in"); const t = i.value; i.value = ""; enviar(t); });
   card.querySelectorAll("[data-sug]").forEach((b) => b.addEventListener("click", () => enviar(b.dataset.sug)));
+}
+
+// ---------- Quedas e reinícios (histórico vindo do log do ACS) ----------
+const EV_TIPO = {
+  religou: ["Desligou e religou", "diag-atencao", "Sem pedido do ACS: falta de energia, tomada, botão ou travamento."],
+  rede: ["Fibra/OLT caiu e voltou", "diag-info", "O equipamento continuou ligado; a conexão GPON se refez (ou reset/troca de ACS)."],
+  acs: ["Reinício pedido pelo ACS", "diag-ok", "Portal ou reboot periódico da madrugada."],
+  firmware: ["Reinício da atualização de firmware", "diag-ok", "Reiniciou depois de um comando de firmware."],
+};
+const durMin = (m) => (m == null ? "—" : m < 60 ? `${m} min` : m < 2880 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} dias`);
+
+async function loadEventos(id) {
+  const card = $("#ev-card");
+  if (!card) return;
+  let r;
+  try { r = await api(`/devices/${enc(id)}/eventos`); } catch (e) { r = { eventos: [], indisponivel: true }; }
+  if (!$("#ev-card")) return;
+  const ev = r.eventos || [];
+  const sem7 = ev.filter((e) => Date.now() - Date.parse(e.ts) < 7 * 86400000);
+  const n = (t) => sem7.filter((e) => e.tipo === t).length;
+  card.innerHTML = `
+    <div class="card-head"><h2>Quedas e reinícios</h2>
+      <span class="muted">${r.indisponivel ? "histórico indisponível agora" : `últimos 7 dias: ${n("religou")} religou · ${n("rede")} fibra/OLT · ${n("acs") + n("firmware")} pedidos pelo ACS`}</span></div>
+    ${ev.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Quando</th><th>O que aconteceu</th><th>Sem contato antes</th><th>Eventos recebidos</th></tr></thead>
+      <tbody>${ev.map((e) => {
+        const [txt, cls, dica] = EV_TIPO[e.tipo] || [e.tipo, "", ""];
+        return `<tr><td title="${esc(fmtDate(e.ts))}">${esc(fmtDate(e.ts))}<div class="muted" style="font-size:12px">${timeAgo(e.ts)}</div></td>
+          <td><span class="ev-tag ${cls}">${esc(txt)}</span><div class="muted" style="font-size:12px">${esc(dica)}</div></td>
+          <td>${e.semContatoMin != null && e.semContatoMin > 10 ? `<b>${durMin(e.semContatoMin)}</b>` : durMin(e.semContatoMin)}</td>
+          <td><code style="font-size:12px">${esc(e.eventos)}</code></td></tr>`;
+      }).join("")}</tbody></table></div>`
+      : `<div class="empty">${r.indisponivel ? "Não foi possível consultar o histórico no servidor do ACS." : "Nenhum reinício registrado (histórico desde 17/11/2026, guarda 45 dias)."}</div>`}
+    <p class="muted" style="font-size:12px;margin:10px 0 0">O ACS não sabe diferenciar falta de energia de tirar da tomada. Para confirmar falta de energia na ONU, veja o alarme <i>dying gasp</i> na OLT.</p>`;
 }
 
 // ---------- Firmware: arquivos por modelo e atualização ----------

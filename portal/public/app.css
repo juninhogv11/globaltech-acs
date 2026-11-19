@@ -341,3 +341,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .fw-form input { width: 100%; }
 @media (max-width: 860px) { .fw-form { grid-template-columns: 1fr; } }
 .msg-via { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.ev-tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.ev-tag.diag-atencao { color: #a35f05; }
+.ev-tag.diag-info { color: var(--brand); }
+.ev-tag.diag-ok { color: var(--good); background: #f1fbf5; }

@@ -1,0 +1,13 @@
+# Rotação dos logs do GenieACS: copiar para /etc/logrotate.d/genieacs
+# copytruncate: o GenieACS continua escrevendo no mesmo arquivo; o coletor de eventos
+# (genieacs-backup.js serve) percebe o truncamento e recomeça do início.
+/var/log/genieacs/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su genieacs genieacs
+}

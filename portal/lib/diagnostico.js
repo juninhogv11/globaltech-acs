@@ -17,7 +17,7 @@ const tempo = (ms) => {
   return h < 48 ? `${h} h` : `${Math.round(h / 24)} dias`;
 };
 
-function diagnosticar(doc, faults) {
+function diagnosticar(doc, faults, eventos = []) {
   const d = devices.normalize(doc);
   const info = lan.lanInfo(doc);
   const st = speedtest.info(doc);
@@ -47,6 +47,20 @@ function diagnosticar(doc, faults) {
     add("atencao", "Energia", `Reiniciou há ${tempo(d.uptime * 1000)}`, "Reinício recente: queda de energia, reboot manual/periódico ou travamento. Se o cliente relata quedas, pergunte se o roteador está em tomada/filtro de linha estável.");
   } else if (d.uptime !== null) {
     add("ok", "Energia", `Ligado há ${tempo(d.uptime * 1000)}`, "");
+  }
+
+  // 3b. Histórico de quedas (últimos 7 dias)
+  const sem7 = (eventos || []).filter((e) => ago(e.ts) < 7 * 24 * H);
+  const religou = sem7.filter((e) => e.tipo === "religou");
+  const rede = sem7.filter((e) => e.tipo === "rede");
+  if (religou.length >= 3) {
+    add("atencao", "Energia", `Desligou e religou ${religou.length} vezes em 7 dias`, "Sem pedido do ACS: falta de energia, tomada/filtro de linha com mau contato, alguém desligando o aparelho ou travamento. Vale um estabilizador/nobreak ou trocar a fonte.");
+  } else if (religou.length && ago(religou[religou.length - 1].ts) < 24 * H) {
+    const u = religou[religou.length - 1];
+    add("info", "Energia", `Desligou e religou há ${tempo(ago(u.ts))}`, `Sem pedido do ACS (falta de energia, tomada ou botão).${u.semContatoMin > 10 ? ` Ficou ${tempo(u.semContatoMin * 60000)} sem contato.` : ""}`);
+  }
+  if (rede.length >= 3) {
+    add("atencao", "Fibra", `Conexão com a OLT caiu e voltou ${rede.length} vezes em 7 dias`, "O equipamento continuou ligado, mas perdeu a fibra/OLT. Verifique a OLT (alarmes de LOS/dying gasp) e a rede óptica do cliente.");
   }
 
   // 4. Provisionamento e SGP
@@ -123,7 +137,7 @@ function diagnosticar(doc, faults) {
 
   const ordem = { problema: 0, atencao: 1, info: 2, ok: 3 };
   out.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
-  return { device: d, achados: out, resumo: resumo(out) };
+  return { device: d, achados: out, resumo: resumo(out), reinicios: { religou: religou.length, foraDaRede: rede.length, pedidosPeloAcs: sem7.filter((e) => e.tipo === "acs").length } };
 }
 
 function resumo(achados) {
@@ -151,6 +165,7 @@ function contextoIA(doc, diag) {
     aparelhosNaRede: (info.hosts || []).filter((h) => h.active !== false).length,
     portasLan: (info.ports || []).map((p) => ({ porta: p.name, status: p.status, mbps: p.speed })),
     testeVelocidade: { downloadMbps: (st.download || {}).mbps || null, uploadMbps: (st.upload || {}).mbps || null },
+    reinicios7dias: diag.reinicios || null,
     achados: diag.achados.map((a) => ({ nivel: a.nivel, area: a.area, titulo: a.titulo, detalhe: a.detalhe })),
   };
 }

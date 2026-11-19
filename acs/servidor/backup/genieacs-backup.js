@@ -288,8 +288,114 @@ async function restore({ name, escopo, aparelho }) {
   }
 }
 
+// ---------- Histórico de quedas e reinícios (lido do log do GenieACS) ----------
+// Para cada Inform com "1 BOOT" ou "0 BOOTSTRAP" guarda: quando, eventos, quanto tempo ficou sem contato e o tipo:
+//   acs     = reinício pedido pelo ACS ("M Reboot": portal ou reboot periódico)
+//   religou = o equipamento desligou e religou (falta de energia, tomada, botão ou travamento)
+//   rede    = só "0 BOOTSTRAP": continuou ligado, mas a fibra/OLT caiu e voltou (ou reset/troca de ACS)
+const ACCESS_LOG = process.env.CWMP_ACCESS_LOG || "/var/log/genieacs/genieacs-cwmp-access.log";
+const EV_DIR = "/var/lib/genieacs-eventos";
+const EV_FILE = path.join(EV_DIR, "eventos.json");
+const EV_DIAS = 45;
+const INFORM_RE = /^(\S+) \[\w+\] \S+ (\S+): Inform; cpeRequestId="[^"]*" informEvent="([^"]*)"/;
+let ev = null;
+
+function evLoad() {
+  if (ev) return ev;
+  try { ev = JSON.parse(fs.readFileSync(EV_FILE, "utf8")); } catch { ev = { ino: 0, offset: 0, ultimo: {}, eventos: {} }; }
+  return ev;
+}
+function evSave() {
+  fs.mkdirSync(EV_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(EV_FILE + ".tmp", JSON.stringify(ev));
+  fs.renameSync(EV_FILE + ".tmp", EV_FILE);
+}
+function tipoEvento(e) {
+  if (/M Reboot/.test(e)) return "acs";
+  if (/1 BOOT/.test(e)) return "religou";
+  return "rede";
+}
+
+// Lê só o que foi acrescentado ao log desde a última vez (aguenta rotação por cópia/truncamento)
+function coletarEventos() {
+  evLoad();
+  let st;
+  try { st = fs.statSync(ACCESS_LOG); } catch { return 0; }
+  if (st.ino !== ev.ino || st.size < ev.offset) { ev.ino = st.ino; ev.offset = 0; }
+  if (st.size === ev.offset) return 0;
+  const fd = fs.openSync(ACCESS_LOG, "r");
+  let novos = 0;
+  try {
+    const CH = 4 * 1024 * 1024;
+    let resto = "";
+    let pos = ev.offset;
+    while (pos < st.size) {
+      const buf = Buffer.alloc(Math.min(CH, st.size - pos));
+      const n = fs.readSync(fd, buf, 0, buf.length, pos);
+      if (!n) break;
+      pos += n;
+      const txt = resto + buf.toString("utf8", 0, n);
+      const linhas = txt.split("\n");
+      resto = linhas.pop(); // linha incompleta: fica para a próxima leitura
+      for (const l of linhas) {
+        const m = INFORM_RE.exec(l);
+        if (!m) continue;
+        const [, ts, id, eventos] = m;
+        if (/1 BOOT|0 BOOTSTRAP/.test(eventos)) {
+          const lista = (ev.eventos[id] = ev.eventos[id] || []);
+          const tipo = tipoEvento(eventos);
+          const ult = lista[lista.length - 1];
+          // O equipamento repete o Inform de boot se a sessão falhar: conta uma vez só (janela de 10 min)
+          if (!(ult && ult.tipo === tipo && Date.parse(ts) - Date.parse(ult.ts) < 600000)) {
+            const antes = ev.ultimo[id];
+            lista.push({ ts, eventos, tipo, semContatoMin: antes ? Math.round((Date.parse(ts) - Date.parse(antes)) / 60000) : null });
+            novos++;
+          }
+        }
+        ev.ultimo[id] = ts;
+      }
+    }
+    ev.offset = pos - Buffer.byteLength(resto);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const limite = Date.now() - EV_DIAS * 86400000;
+  for (const id of Object.keys(ev.eventos)) {
+    ev.eventos[id] = ev.eventos[id].filter((x) => Date.parse(x.ts) >= limite);
+    if (!ev.eventos[id].length) delete ev.eventos[id];
+  }
+  evSave();
+  return novos;
+}
+
+// Vários equipamentos voltando quase juntos = evento regional (energia do bairro, OLT, fibra)
+function eventosRegionais(dias = 7, janelaMin = 10, minimo = 3) {
+  evLoad();
+  const desde = Date.now() - dias * 86400000;
+  const todos = [];
+  for (const [id, lista] of Object.entries(ev.eventos)) {
+    for (const x of lista) if (x.tipo !== "acs" && Date.parse(x.ts) >= desde) todos.push({ id, ...x, t: Date.parse(x.ts) });
+  }
+  todos.sort((a, b) => a.t - b.t);
+  const grupos = [];
+  for (const x of todos) {
+    const g = grupos[grupos.length - 1];
+    if (g && x.t - g.fim <= janelaMin * 60000) { g.itens.push(x); g.fim = x.t; } else grupos.push({ inicio: x.t, fim: x.t, itens: [x] });
+  }
+  return grupos.filter((g) => new Set(g.itens.map((x) => x.id)).size >= minimo).map((g) => ({
+    inicio: new Date(g.inicio).toISOString(), fim: new Date(g.fim).toISOString(),
+    aparelhos: new Set(g.itens.map((x) => x.id)).size,
+    religaram: new Set(g.itens.filter((x) => x.tipo === "religou").map((x) => x.id)).size,
+    soRede: new Set(g.itens.filter((x) => x.tipo === "rede").map((x) => x.id)).size,
+    ids: [...new Set(g.itens.map((x) => x.id))],
+  })).reverse();
+}
+
 // ---------- API para o portal ----------
 function serve() {
+  // Coletor de eventos: lê o log agora e a cada minuto
+  try { log(`eventos: ${coletarEventos()} novo(s) no log`); } catch (e) { log(`eventos: ERRO ${e.message}`); }
+  setInterval(() => { try { coletarEventos(); } catch (e) { log(`eventos: ERRO ${e.message}`); } }, 60000);
   const conf = loadConf();
   if (!conf.token || conf.token.length < 32) throw new Error("TOKEN ausente ou curto em backup.env");
   const tokenBuf = Buffer.from(conf.token);
@@ -305,6 +411,15 @@ function serve() {
       if (req.method === "GET" && pathname === "/backups") return send(res, 200, { ...(await list()), ocupado: busy });
       if (req.method === "POST" && pathname === "/backups") return send(res, 200, await exclusive("backup", () => backup("manual")));
       if (req.method === "POST" && pathname === "/restaurar") return send(res, 200, await exclusive("restauração", () => restore(data)));
+      if (req.method === "GET" && pathname === "/eventos/regionais") {
+        const q = new URL(req.url, "http://x").searchParams;
+        return send(res, 200, { regionais: eventosRegionais(Number(q.get("dias")) || 7) });
+      }
+      const me = pathname.match(/^\/eventos\/(.+)$/);
+      if (req.method === "GET" && me) {
+        const id = decodeURIComponent(me[1]);
+        return send(res, 200, { id, eventos: (evLoad().eventos[id] || []).slice().reverse(), desde: EV_DIAS });
+      }
       send(res, 404, { error: "rota não encontrada" });
     } catch (e) {
       log(`ERRO API: ${e.message}`);
