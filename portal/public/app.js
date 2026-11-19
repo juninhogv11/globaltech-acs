@@ -1263,8 +1263,86 @@ async function restoreDialog(b) {
   dlg.showModal();
 }
 
+// ---------- OLTs: cadastro e teste de conexão ----------
+async function pageOlts() {
+  const { olts, tipos } = await api("/olts");
+  const teste = (t) => !t ? `<span class="muted">não testada</span>` : `
+    <div>${t.snmp && t.snmp.ok ? `<span class="badge good">SNMP ok</span> <span class="muted">${esc(t.snmp.nome || "")}</span>` : `<span class="badge bad">SNMP</span> <span class="muted">${esc((t.snmp || {}).erro || "")}</span>`}</div>
+    <div style="margin-top:4px">${t.telnet && t.telnet.ok ? `<span class="badge good">Telnet ok</span> <span class="muted"><code>${esc(t.telnet.prompt)}</code></span>` : `<span class="badge bad">Telnet</span> <span class="muted">${esc((t.telnet || {}).erro || "")}</span>`}</div>
+    <div class="muted" style="font-size:11.5px">${timeAgo(t.em)}</div>`;
+  view.innerHTML = `
+    <div class="page-head"><h1>OLTs</h1><span class="muted">${olts.length} cadastrada(s)</span>
+      <button class="btn primary" id="olt-nova" style="margin-left:auto">Cadastrar OLT</button></div>
+    <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
+      <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
+    <div class="card">${olts.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th></th></tr></thead>
+      <tbody>${olts.map((o) => `<tr>
+        <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
+        <td>porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
+        <td>porta ${o.telnetPorta}<br><span class="muted">${esc(o.usuario || "sem usuário")} ${o.temSenha ? "· senha ••••••" : "· sem senha"}</span></td>
+        <td>${teste(o.ultimoTeste)}</td>
+        <td style="white-space:nowrap"><button class="btn sm" data-olt-testar="${esc(o.id)}">Testar</button>
+          <button class="btn sm" data-olt-editar="${esc(o.id)}">Editar</button>
+          <button class="btn sm danger" data-olt-apagar="${esc(o.id)}">Apagar</button></td></tr>`).join("")}</tbody>
+    </table></div>` : `<div class="empty">Nenhuma OLT cadastrada.</div>`}</div>`;
+
+  $("#olt-nova").addEventListener("click", () => oltForm(null, tipos));
+  view.querySelectorAll("[data-olt-editar]").forEach((b) => b.addEventListener("click", () => oltForm(olts.find((o) => o.id === b.dataset.oltEditar), tipos)));
+  view.querySelectorAll("[data-olt-testar]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      const r = await api(`/olts/${enc(b.dataset.oltTestar)}/testar`, { method: "POST", loading: "Testando SNMP e Telnet na OLT…" });
+      toast(`SNMP: ${r.snmp.ok ? "ok" : "falhou"} · Telnet: ${r.telnet.ok ? "ok" : "falhou"}`, !(r.snmp.ok && r.telnet.ok));
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  }));
+  view.querySelectorAll("[data-olt-apagar]").forEach((b) => b.addEventListener("click", async () => {
+    const o = olts.find((x) => x.id === b.dataset.oltApagar);
+    if (!confirm(`Apagar a OLT ${o.descricao} (${o.ip}) do portal?\n\nIsso não mexe na OLT, só remove o cadastro.`)) return;
+    try { await api(`/olts/${enc(o.id)}`, { method: "DELETE", loading: "Apagando…" }); toast("OLT removida."); route(true); } catch (e) { toast(e.message, true); }
+  }));
+}
+
+function oltForm(o, tipos) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "fw-dialog";
+  const v = (k, d = "") => esc(o && o[k] != null ? o[k] : d);
+  dlg.innerHTML = `<form method="dialog" class="olt-form">
+    <h2>${o ? "Editar OLT" : "Cadastrar OLT"}</h2>
+    <label>Descrição<input name="descricao" value="${v("descricao")}" placeholder="ex.: OLT Centro" maxlength="80"></label>
+    <label>Tipo<select name="tipo" required>${Object.entries(tipos).map(([k, n]) => `<option value="${k}" ${o && o.tipo === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label>IP<input name="ip" value="${v("ip")}" required placeholder="ex.: 10.0.0.2"></label>
+    <div class="olt-2">
+      <label>Porta SNMP<input name="snmpPorta" type="number" min="1" max="65535" value="${v("snmpPorta", 161)}"></label>
+      <label>Community SNMP<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
+    </div>
+    <div class="olt-2">
+      <label>Porta Telnet<input name="telnetPorta" type="number" min="1" max="65535" value="${v("telnetPorta", 23)}"></label>
+      <label>Usuário Telnet<input name="usuario" value="${v("usuario")}" autocomplete="off"></label>
+    </div>
+    <label>Senha Telnet<input name="senha" type="password" autocomplete="new-password" placeholder="${o && o.temSenha ? "•••••• (vazio = manter)" : ""}"></label>
+    <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.</p>
+    <div class="fw-actions"><button class="btn" value="cancel" type="submit">Cancelar</button><button class="btn primary" value="ok" type="submit">Salvar</button></div>
+  </form>`;
+  document.body.appendChild(dlg);
+  dlg.addEventListener("close", async () => {
+    const ok = dlg.returnValue === "ok";
+    const body = Object.fromEntries(new FormData(dlg.querySelector("form")));
+    dlg.remove();
+    if (!ok) return;
+    if (o) body.id = o.id;
+    try {
+      const r = await api("/olts", { method: "POST", body, loading: "Salvando…" });
+      toast(`OLT ${r.descricao} salva. Use "Testar" para conferir a conexão.`);
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  });
+  dlg.showModal();
+}
+
 // ---------- Roteamento ----------
 const ROUTES = {
+  olts: ["olts", "OLTs", pageOlts],
   backups: ["backups", "Backups", pageBackups],
   "": ["dashboard", "Dashboard", pageDashboard],
   devices: ["devices", "Dispositivos", pageDevices],

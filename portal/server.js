@@ -12,6 +12,7 @@ const wifibackup = require("./lib/wifibackup");
 const firmware = require("./lib/firmware");
 const backup = require("./lib/backup");
 const diagnostico = require("./lib/diagnostico");
+const olts = require("./lib/olts");
 const assistente = require("./lib/assistente");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
@@ -390,6 +391,31 @@ api.delete("/api/faults/:id", async (req, res) => {
   await nbi.deleteFault(req.params.id);
   res.json({ ok: true });
 });
+
+// ---------- OLTs (cadastro; senha e community criptografadas e nunca devolvidas) ----------
+api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS }));
+
+api.post("/api/olts", async (req, res) => {
+  const r = olts.salvar(req.body || {}, req.user.user);
+  console.log(new Date().toISOString(), `OLT ${r.descricao} (${r.ip}) salva por ${req.user.user}`);
+  res.json(r);
+});
+
+api.delete("/api/olts/:id", async (req, res) => {
+  olts.remover(req.params.id);
+  console.log(new Date().toISOString(), `OLT ${req.params.id} removida por ${req.user.user}`);
+  res.json({ ok: true });
+});
+
+api.post("/api/olts/:id/testar", async (req, res) => res.json(await olts.testar(req.params.id)));
+
+// Leitura (só comandos show/display/info) e SNMP walk, para levantar o formato de cada fabricante
+api.post("/api/olts/:id/ler", async (req, res) => {
+  const r = await olts.lerComandos(req.params.id, (req.body || {}).comandos);
+  console.log(new Date().toISOString(), `OLT ${req.params.id}: leitura de ${(req.body.comandos || []).length} comando(s) por ${req.user.user}`);
+  res.json(r);
+});
+api.post("/api/olts/:id/snmpwalk", async (req, res) => res.json(await olts.snmpWalk(req.params.id, (req.body || {}).oid, (req.body || {}).max)));
 
 // ---------- Backups (API de backup no servidor GenieACS) ----------
 api.get("/api/backups", async (req, res) => {

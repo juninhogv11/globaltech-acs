@@ -345,3 +345,6 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .ev-tag.diag-atencao { color: #a35f05; }
 .ev-tag.diag-info { color: var(--brand); }
 .ev-tag.diag-ok { color: var(--good); background: #f1fbf5; }
+.olt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-top: 10px; }
+.olt-form input, .olt-form select { width: 100%; }
+.olt-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
