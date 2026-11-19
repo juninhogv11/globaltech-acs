@@ -298,11 +298,14 @@ const EV_DIR = "/var/lib/genieacs-eventos";
 const EV_FILE = path.join(EV_DIR, "eventos.json");
 const EV_DIAS = 45;
 const INFORM_RE = /^(\S+) \[\w+\] \S+ (\S+): Inform; cpeRequestId="[^"]*" informEvent="([^"]*)"/;
+const PEDIDO_RE = /^(\S+) \[\w+\] \S+ (\S+): ACS request; acsRequestId="[^"]*" acsRequestName="(Reboot|Download)"/;
+const PRIORIDADE = { rede: 0, religou: 1, firmware: 2, acs: 3 };
 let ev = null;
 
 function evLoad() {
   if (ev) return ev;
-  try { ev = JSON.parse(fs.readFileSync(EV_FILE, "utf8")); } catch { ev = { ino: 0, offset: 0, ultimo: {}, eventos: {} }; }
+  try { ev = JSON.parse(fs.readFileSync(EV_FILE, "utf8")); } catch { ev = { versao: 2, ino: 0, offset: 0, ultimo: {}, pedidos: {}, eventos: {} }; }
+  if (ev.versao !== 2) ev = { versao: 2, ino: 0, offset: 0, ultimo: {}, pedidos: {}, eventos: {} }; // formato antigo: relê o log
   return ev;
 }
 function evSave() {
@@ -310,8 +313,13 @@ function evSave() {
   fs.writeFileSync(EV_FILE + ".tmp", JSON.stringify(ev));
   fs.renameSync(EV_FILE + ".tmp", EV_FILE);
 }
-function tipoEvento(e) {
-  if (/M Reboot/.test(e)) return "acs";
+// O TP-Link não manda "M Reboot": também conta como pedido do ACS um boot até 15 min depois de o ACS
+// mandar "Reboot" (portal ou reboot periódico), e como firmware até 60 min depois de um "Download".
+function tipoEvento(e, ts, pedidos) {
+  const t = Date.parse(ts);
+  const p = pedidos || {};
+  if (/M Reboot/.test(e) || (p.reboot && t - Date.parse(p.reboot) >= 0 && t - Date.parse(p.reboot) < 15 * 60000)) return "acs";
+  if (p.download && t - Date.parse(p.download) >= 0 && t - Date.parse(p.download) < 60 * 60000) return "firmware";
   if (/1 BOOT/.test(e)) return "religou";
   return "rede";
 }
@@ -338,15 +346,25 @@ function coletarEventos() {
       const linhas = txt.split("\n");
       resto = linhas.pop(); // linha incompleta: fica para a próxima leitura
       for (const l of linhas) {
+        const p = PEDIDO_RE.exec(l);
+        if (p) {
+          const ped = (ev.pedidos[p[2]] = ev.pedidos[p[2]] || {});
+          ped[p[3] === "Reboot" ? "reboot" : "download"] = p[1];
+          continue;
+        }
         const m = INFORM_RE.exec(l);
         if (!m) continue;
         const [, ts, id, eventos] = m;
         if (/1 BOOT|0 BOOTSTRAP/.test(eventos)) {
           const lista = (ev.eventos[id] = ev.eventos[id] || []);
-          const tipo = tipoEvento(eventos);
+          const tipo = tipoEvento(eventos, ts, ev.pedidos[id]);
           const ult = lista[lista.length - 1];
-          // O equipamento repete o Inform de boot se a sessão falhar: conta uma vez só (janela de 10 min)
-          if (!(ult && ult.tipo === tipo && Date.parse(ts) - Date.parse(ult.ts) < 600000)) {
+          // Avisos do mesmo reinício (repetição, ou BOOTSTRAP e BOOT separados) em até 10 min viram um evento só,
+          // com a classificação mais forte
+          if (ult && Date.parse(ts) - Date.parse(ult.ts) < 600000) {
+            if (PRIORIDADE[tipo] > PRIORIDADE[ult.tipo]) ult.tipo = tipo;
+            if (!ult.eventos.split(" | ").includes(eventos)) ult.eventos += " | " + eventos;
+          } else {
             const antes = ev.ultimo[id];
             lista.push({ ts, eventos, tipo, semContatoMin: antes ? Math.round((Date.parse(ts) - Date.parse(antes)) / 60000) : null });
             novos++;
@@ -360,6 +378,10 @@ function coletarEventos() {
     fs.closeSync(fd);
   }
   const limite = Date.now() - EV_DIAS * 86400000;
+  for (const id of Object.keys(ev.pedidos)) {
+    const p = ev.pedidos[id];
+    if (Date.parse(p.reboot || 0) < limite && Date.parse(p.download || 0) < limite) delete ev.pedidos[id];
+  }
   for (const id of Object.keys(ev.eventos)) {
     ev.eventos[id] = ev.eventos[id].filter((x) => Date.parse(x.ts) >= limite);
     if (!ev.eventos[id].length) delete ev.eventos[id];
@@ -374,7 +396,7 @@ function eventosRegionais(dias = 7, janelaMin = 10, minimo = 3) {
   const desde = Date.now() - dias * 86400000;
   const todos = [];
   for (const [id, lista] of Object.entries(ev.eventos)) {
-    for (const x of lista) if (x.tipo !== "acs" && Date.parse(x.ts) >= desde) todos.push({ id, ...x, t: Date.parse(x.ts) });
+    for (const x of lista) if ((x.tipo === "religou" || x.tipo === "rede") && Date.parse(x.ts) >= desde) todos.push({ id, ...x, t: Date.parse(x.ts) });
   }
   todos.sort((a, b) => a.t - b.t);
   const grupos = [];
@@ -382,13 +404,14 @@ function eventosRegionais(dias = 7, janelaMin = 10, minimo = 3) {
     const g = grupos[grupos.length - 1];
     if (g && x.t - g.fim <= janelaMin * 60000) { g.itens.push(x); g.fim = x.t; } else grupos.push({ inicio: x.t, fim: x.t, itens: [x] });
   }
-  return grupos.filter((g) => new Set(g.itens.map((x) => x.id)).size >= minimo).map((g) => ({
-    inicio: new Date(g.inicio).toISOString(), fim: new Date(g.fim).toISOString(),
-    aparelhos: new Set(g.itens.map((x) => x.id)).size,
-    religaram: new Set(g.itens.filter((x) => x.tipo === "religou").map((x) => x.id)).size,
-    soRede: new Set(g.itens.filter((x) => x.tipo === "rede").map((x) => x.id)).size,
-    ids: [...new Set(g.itens.map((x) => x.id))],
-  })).reverse();
+  return grupos.filter((g) => new Set(g.itens.map((x) => x.id)).size >= minimo).map((g) => {
+    const ids = [...new Set(g.itens.map((x) => x.id))];
+    const religaram = new Set(g.itens.filter((x) => x.tipo === "religou").map((x) => x.id));
+    return {
+      inicio: new Date(g.inicio).toISOString(), fim: new Date(g.fim).toISOString(),
+      aparelhos: ids.length, religaram: religaram.size, soRede: ids.filter((id) => !religaram.has(id)).length, ids,
+    };
+  }).reverse();
 }
 
 // ---------- API para o portal ----------
