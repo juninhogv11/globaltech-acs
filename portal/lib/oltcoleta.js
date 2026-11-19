@@ -12,6 +12,8 @@ const olts = require("./olts");
 const FILE = path.join(path.dirname(USERS_FILE), "olt-onus.json");
 const DIAS = 45;
 const INTERVALO_MIN = Number(process.env.OLT_COLETA_MIN || 10);
+// Nokia ISAM lista as ONTs devagar (~30 s por leitura): lida com menos frequência
+const INTERVALO_TIPO = { nokia: Number(process.env.OLT_COLETA_NOKIA_MIN || 30) };
 
 let db = null;
 function load() {
@@ -121,13 +123,17 @@ async function coletarNokia(o) {
 
 // ---------- Coleta geral ----------
 let rodando = false;
-async function coletar() {
+// forcar = true (botão "Ler ONUs agora"): lê todas, sem esperar o intervalo próprio de cada tipo
+async function coletar(forcar = false) {
   if (rodando) return;
   rodando = true;
   load();
   const agora = new Date().toISOString();
   try {
     for (const o of olts.listar()) {
+      const ult = db.coletas[o.id];
+      const minTipo = INTERVALO_TIPO[o.tipo];
+      if (!forcar && minTipo && ult && ult.ok && Date.now() - Date.parse(ult.em) < (minTipo - 1) * 60000) continue;
       const c = { em: agora, ok: false };
       try {
         let onus, extra = {};
@@ -228,7 +234,7 @@ function confirmarEventos(eventos, onu) {
 
 function resumo() {
   load();
-  return { coletas: db.coletas, intervaloMin: INTERVALO_MIN, onus: Object.keys(db.onus).length };
+  return { coletas: db.coletas, intervaloMin: INTERVALO_MIN, intervaloTipo: INTERVALO_TIPO, onus: Object.keys(db.onus).length };
 }
 
 function iniciar() {

@@ -114,7 +114,7 @@ async function eventosDe(id, doc) {
 }
 
 api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id, await nbi.device(req.params.id))));
-api.post("/api/olts/coletar", async (req, res) => { await oltcoleta.coletar(); res.json(oltcoleta.resumo()); });
+api.post("/api/olts/coletar", async (req, res) => { await oltcoleta.coletar(true); res.json(oltcoleta.resumo()); });
 
 api.get("/api/eventos/regionais", async (req, res) => {
   if (!backup.configured()) return res.json({ regionais: [] });

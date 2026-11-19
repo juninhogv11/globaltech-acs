@@ -1297,7 +1297,7 @@ async function pageOlts() {
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min)</th><th></th></tr></thead>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; Nokia ${((coleta || {}).intervaloTipo || {}).nokia || 30} min)</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>

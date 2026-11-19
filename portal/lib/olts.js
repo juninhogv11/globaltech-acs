@@ -97,6 +97,17 @@ function buscar(id) {
   return o;
 }
 
+// No máximo UMA sessão Telnet do portal por OLT de cada vez (coleta, página do aparelho e teste
+// entram numa fila por OLT): algumas OLTs aceitam poucas sessões e o técnico/SGP não pode ficar sem vaga.
+const filas = new Map();
+function naFila(id, fn) {
+  const anterior = filas.get(id) || Promise.resolve();
+  const p = anterior.catch(() => {}).then(fn);
+  filas.set(id, p.catch(() => {}));
+  return p;
+}
+const promptUsuario = (p) => /[^#]>\s*$/.test(p); // V-SOL sem enable termina em ">"
+
 // Testa SNMP (nome, descrição e tempo ligado) e Telnet (login). Não muda nada na OLT.
 async function testar(id) {
   const o = buscar(id);
@@ -109,17 +120,19 @@ async function testar(id) {
   } else r.snmp = { ok: false, erro: "community não cadastrada" };
   if (o.protocolo === "ssh") r.telnet = { ok: false, erro: "SSH ainda não é suportado pelo portal; use Telnet" };
   else if (o.usuario && o.senha) {
-    let s;
-    try {
-      const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
-      s = l.sessao;
-      r.telnet = { ok: true, prompt: l.prompt, banner: l.banner };
-      // V-SOL (prompt ">"): confere também o modo privilegiado com a senha admin
-      if (o.tipo === "vsol" && /[^#]>s*$/.test(l.prompt)) {
-        try { await telnet.enable(s, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha)); r.telnet.enable = "ok"; }
-        catch (e) { r.telnet.enable = e.message; }
-      }
-    } catch (e) { r.telnet = { ok: false, erro: e.message }; } finally { if (s) s.fechar(); }
+    await naFila(o.id, async () => {
+      let s;
+      try {
+        const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
+        s = l.sessao;
+        r.telnet = { ok: true, prompt: l.prompt, banner: l.banner };
+        // V-SOL (prompt ">"): confere também o modo privilegiado com a senha admin
+        if (o.tipo === "vsol" && promptUsuario(l.prompt)) {
+          try { await telnet.enable(s, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha)); r.telnet.enable = "ok"; }
+          catch (e) { r.telnet.enable = e.message; }
+        }
+      } catch (e) { r.telnet = { ok: false, erro: e.message }; } finally { if (s) s.fechar(); }
+    });
   } else r.telnet = { ok: false, erro: "usuário/senha não cadastrados" };
   const list = load();
   const x = list.find((y) => y.id === id);
@@ -136,11 +149,13 @@ async function lerComandos(id, comandos) {
   const proibido = lista.find((c) => !LEITURA_RE.test(c));
   if (proibido) throw bad(`Comando não permitido (só leitura): ${proibido}`);
   if (!o.usuario || !o.senha) throw bad("Usuário/senha Telnet não cadastrados.");
-  const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
-  try {
-    if (o.tipo === "vsol" && /[^#]>s*$/.test(l.prompt)) await telnet.enable(l.sessao, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha));
-    return { prompt: l.prompt, saidas: await telnet.executar(l.sessao, lista, 60000) };
-  } finally { l.sessao.fechar(); }
+  return naFila(o.id, async () => {
+    const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
+    try {
+      if (o.tipo === "vsol" && promptUsuario(l.prompt)) await telnet.enable(l.sessao, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha));
+      return { prompt: l.prompt, saidas: await telnet.executar(l.sessao, lista, 60000) };
+    } finally { l.sessao.fechar(); }
+  });
 }
 
 async function snmpWalk(id, oid, max = 300) {
