@@ -1268,7 +1268,7 @@ async function pageOlts() {
   const { olts, tipos } = await api("/olts");
   const teste = (t) => !t ? `<span class="muted">não testada</span>` : `
     <div>${t.snmp && t.snmp.ok ? `<span class="badge good">SNMP ok</span> <span class="muted">${esc(t.snmp.nome || "")}</span>` : `<span class="badge bad">SNMP</span> <span class="muted">${esc((t.snmp || {}).erro || "")}</span>`}</div>
-    <div style="margin-top:4px">${t.telnet && t.telnet.ok ? `<span class="badge good">Telnet ok</span> <span class="muted"><code>${esc(t.telnet.prompt)}</code></span>` : `<span class="badge bad">Telnet</span> <span class="muted">${esc((t.telnet || {}).erro || "")}</span>`}</div>
+    <div style="margin-top:4px">${t.telnet && t.telnet.ok ? `<span class="badge good">Telnet ok</span> <span class="muted"><code>${esc(t.telnet.prompt)}</code></span>${t.telnet.enable ? ` <span class="badge ${t.telnet.enable === "ok" ? "good" : "bad"}">enable ${t.telnet.enable === "ok" ? "ok" : ""}</span>${t.telnet.enable !== "ok" ? ` <span class="muted">${esc(t.telnet.enable)}</span>` : ""}` : ""}` : `<span class="badge bad">Telnet</span> <span class="muted">${esc((t.telnet || {}).erro || "")}</span>`}</div>
     <div class="muted" style="font-size:11.5px">${timeAgo(t.em)}</div>`;
   view.innerHTML = `
     <div class="page-head"><h1>OLTs</h1><span class="muted">${olts.length} cadastrada(s)</span>
@@ -1279,8 +1279,8 @@ async function pageOlts() {
       <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
-        <td>porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
-        <td>porta ${o.telnetPorta}<br><span class="muted">${esc(o.usuario || "sem usuário")} ${o.temSenha ? "· senha ••••••" : "· sem senha"}</span></td>
+        <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
+        <td>${esc(o.protocolo === "ssh" ? "SSH" : "Telnet")} · porta ${o.telnetPorta}<br><span class="muted">${esc(o.usuario || "sem usuário")} ${o.temSenha ? "· senha ••••••" : "· sem senha"}${o.temSenhaAdmin ? " · admin ••••••" : ""}</span></td>
         <td>${teste(o.ultimoTeste)}</td>
         <td style="white-space:nowrap"><button class="btn sm" data-olt-testar="${esc(o.id)}">Testar</button>
           <button class="btn sm" data-olt-editar="${esc(o.id)}">Editar</button>
@@ -1313,14 +1313,20 @@ function oltForm(o, tipos) {
     <label>Tipo<select name="tipo" required>${Object.entries(tipos).map(([k, n]) => `<option value="${k}" ${o && o.tipo === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
     <label>IP<input name="ip" value="${v("ip")}" required placeholder="ex.: 10.0.0.2"></label>
     <div class="olt-2">
-      <label>Porta SNMP<input name="snmpPorta" type="number" min="1" max="65535" value="${v("snmpPorta", 161)}"></label>
-      <label>Community SNMP<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
+      <label>Usuário<input name="usuario" value="${v("usuario")}" autocomplete="off"></label>
+      <label>Senha<input name="senha" type="password" autocomplete="new-password" placeholder="${o && o.temSenha ? "•••••• (vazio = manter)" : ""}"></label>
+    </div>
+    <label>Senha Admin <span class="muted" style="font-weight:400">(enable; se vazio, usa a senha de acesso)</span>
+      <input name="senhaAdmin" type="password" autocomplete="new-password" placeholder="${o && o.temSenhaAdmin ? "•••••• (vazio = manter)" : ""}"></label>
+    <div class="olt-2">
+      <label>Telnet/SSH porta<input name="telnetPorta" type="number" min="1" max="65535" value="${v("telnetPorta", 23)}"></label>
+      <label>Protocolo<select name="protocolo"><option value="telnet">Telnet</option><option value="ssh" ${o && o.protocolo === "ssh" ? "selected" : ""}>SSH (ainda não suportado)</option></select></label>
     </div>
     <div class="olt-2">
-      <label>Porta Telnet<input name="telnetPorta" type="number" min="1" max="65535" value="${v("telnetPorta", 23)}"></label>
-      <label>Usuário Telnet<input name="usuario" value="${v("usuario")}" autocomplete="off"></label>
+      <label>SNMP versão<select name="snmpVersao"><option value="2c">2c</option><option value="1" ${o && o.snmpVersao === "1" ? "selected" : ""}>1</option></select></label>
+      <label>SNMP porta<input name="snmpPorta" type="number" min="1" max="65535" value="${v("snmpPorta", 161)}"></label>
     </div>
-    <label>Senha Telnet<input name="senha" type="password" autocomplete="new-password" placeholder="${o && o.temSenha ? "•••••• (vazio = manter)" : ""}"></label>
+    <label>SNMP community<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
     <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.</p>
     <div class="fw-actions"><button class="btn" value="cancel" type="submit">Cancelar</button><button class="btn primary" value="ok" type="submit">Salvar</button></div>
   </form>`;

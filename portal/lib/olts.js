@@ -45,9 +45,10 @@ function save(list) {
 }
 // Versão para o navegador: sem segredos, só se estão preenchidos
 const publica = (o) => {
-  const { senha, community, ...resto } = o;
-  return { ...resto, temSenha: !!senha, temCommunity: !!community, tipoNome: TIPOS[o.tipo] || o.tipo };
+  const { senha, community, senhaAdmin, ...resto } = o;
+  return { protocolo: "telnet", snmpVersao: "2c", ...resto, temSenha: !!senha, temCommunity: !!community, temSenhaAdmin: !!senhaAdmin, tipoNome: TIPOS[o.tipo] || o.tipo };
 };
+const versaoSnmp = (o) => (o.snmpVersao === "1" ? 0 : 1);
 
 function listar() {
   return load().map(publica);
@@ -69,12 +70,15 @@ function salvar(dados, usuarioPortal) {
     snmpPorta: porta(dados.snmpPorta, 161),
     telnetPorta: porta(dados.telnetPorta, 23),
     usuario: String(dados.usuario || "").trim().slice(0, 64),
+    protocolo: dados.protocolo === "ssh" ? "ssh" : "telnet",
+    snmpVersao: dados.snmpVersao === "1" ? "1" : "2c",
     alterado: new Date().toISOString(),
     alteradoPor: usuarioPortal,
   });
   // Campo vazio = mantém o que já estava gravado
   if (dados.senha) o.senha = cifrar(dados.senha);
   if (dados.community) o.community = cifrar(dados.community);
+  if (dados.senhaAdmin) o.senhaAdmin = cifrar(dados.senhaAdmin);
   save(list);
   return publica(o);
 }
@@ -99,16 +103,22 @@ async function testar(id) {
   const r = { snmp: null, telnet: null, em: new Date().toISOString() };
   if (o.community) {
     try {
-      const v = await snmp.get(o.ip, o.snmpPorta, decifrar(o.community), ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.3.0"]);
+      const v = await snmp.get(o.ip, o.snmpPorta, decifrar(o.community), ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.3.0"], 3000, versaoSnmp(o));
       r.snmp = { ok: true, descricao: String(v[0].value || "").slice(0, 200), nome: v[1].value, ligadoDias: Math.round((v[2].value / 100 / 86400) * 10) / 10 };
     } catch (e) { r.snmp = { ok: false, erro: e.message }; }
   } else r.snmp = { ok: false, erro: "community não cadastrada" };
-  if (o.usuario && o.senha) {
+  if (o.protocolo === "ssh") r.telnet = { ok: false, erro: "SSH ainda não é suportado pelo portal; use Telnet" };
+  else if (o.usuario && o.senha) {
     let s;
     try {
       const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
       s = l.sessao;
       r.telnet = { ok: true, prompt: l.prompt, banner: l.banner };
+      // V-SOL (prompt ">"): confere também o modo privilegiado com a senha admin
+      if (o.tipo === "vsol" && /[^#]>s*$/.test(l.prompt)) {
+        try { await telnet.enable(s, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha)); r.telnet.enable = "ok"; }
+        catch (e) { r.telnet.enable = e.message; }
+      }
     } catch (e) { r.telnet = { ok: false, erro: e.message }; } finally { if (s) s.fechar(); }
   } else r.telnet = { ok: false, erro: "usuário/senha não cadastrados" };
   const list = load();
@@ -127,14 +137,17 @@ async function lerComandos(id, comandos) {
   if (proibido) throw bad(`Comando não permitido (só leitura): ${proibido}`);
   if (!o.usuario || !o.senha) throw bad("Usuário/senha Telnet não cadastrados.");
   const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
-  try { return { prompt: l.prompt, saidas: await telnet.executar(l.sessao, lista, 60000) }; } finally { l.sessao.fechar(); }
+  try {
+    if (o.tipo === "vsol" && /[^#]>s*$/.test(l.prompt)) await telnet.enable(l.sessao, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha));
+    return { prompt: l.prompt, saidas: await telnet.executar(l.sessao, lista, 60000) };
+  } finally { l.sessao.fechar(); }
 }
 
 async function snmpWalk(id, oid, max = 300) {
   const o = buscar(id);
   if (!/^\.?\d+(\.\d+)+$/.test(String(oid || ""))) throw bad("OID inválido.");
   if (!o.community) throw bad("Community não cadastrada.");
-  return snmp.walk(o.ip, o.snmpPorta, decifrar(o.community), String(oid), Math.min(Number(max) || 300, 5000));
+  return snmp.walk(o.ip, o.snmpPorta, decifrar(o.community), String(oid), Math.min(Number(max) || 300, 5000), versaoSnmp(o));
 }
 
 module.exports = { TIPOS, listar, salvar, remover, testar, lerComandos, snmpWalk };

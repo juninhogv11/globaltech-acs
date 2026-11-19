@@ -68,12 +68,13 @@ function decValue(buf, n) {
 }
 
 let reqId = Math.floor(Math.random() * 1e6);
-function request(pduTag, host, port, community, oids, timeout = 3000, tentativas = 2) {
+// versao: 1 = v2c (padrão), 0 = v1
+function request(pduTag, host, port, community, oids, timeout = 3000, tentativas = 2, versao = 1) {
   return new Promise((resolve, reject) => {
     const id = ++reqId % 2147483647;
     const vbs = Buffer.concat(oids.map((o) => tlv(0x30, Buffer.concat([encOid(o), Buffer.from([0x05, 0x00])]))));
     const pdu = tlv(pduTag, Buffer.concat([encInt(id), encInt(0), encInt(0), tlv(0x30, vbs)]));
-    const msg = tlv(0x30, Buffer.concat([encInt(1), tlv(0x04, Buffer.from(community)), pdu]));
+    const msg = tlv(0x30, Buffer.concat([encInt(versao), tlv(0x04, Buffer.from(community)), pdu]));
     const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
     let n = 0, timer;
     const fim = (err, val) => { clearTimeout(timer); try { sock.close(); } catch {} err ? reject(err) : resolve(val); };
@@ -98,14 +99,14 @@ function request(pduTag, host, port, community, oids, timeout = 3000, tentativas
   });
 }
 
-const get = (h, p, c, oids, t) => request(0xa0, h, p, c, oids, t);
+const get = (h, p, c, oids, t, versao = 1) => request(0xa0, h, p, c, oids, t, 2, versao);
 
 // WALK por GETNEXT até sair da árvore (limite de linhas para não travar)
-async function walk(h, p, c, base, max = 5000) {
+async function walk(h, p, c, base, max = 5000, versao = 1) {
   const out = [];
   let oid = base.replace(/^\./, "");
   while (out.length < max) {
-    const [vb] = await request(0xa1, h, p, c, [oid]);
+    const [vb] = await request(0xa1, h, p, c, [oid], 3000, 2, versao);
     if (!vb || (vb.value && vb.value.erro) || !(vb.oid + ".").startsWith(base.replace(/^\./, "") + ".")) break;
     out.push(vb);
     oid = vb.oid;

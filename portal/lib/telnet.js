@@ -6,7 +6,8 @@ const net = require("net");
 const IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;
 const LOGIN_RE = /(user ?name|login|usuario|user)\s*:\s*$/i;
 const PASS_RE = /pass ?word\s*:\s*$/i;
-const PROMPT_RE = /[\w\-.:()\/@\[\] ]{1,60}[>#$%]\s*$/;
+// Fim de prompt com 1 ou 2 símbolos (Nokia ISAM: "typ:isadmin>#")
+const PROMPT_RE = /[\w\-.:()\/@\[\] ]{1,60}[>#$%]{1,2}\s*$/;
 const MORE_RE = /(-+ ?more ?-+|--more--|press any key|<--- more --->|\[more\]|---- more ----)[^\n]*$/i;
 const FALHA_RE = /(login incorrect|authentication failed|invalid (user|password|login)|access denied|bad password|login failed|% ?authentication)/i;
 
@@ -83,8 +84,19 @@ async function login(host, port, usuario, senha, timeout = 15000) {
   const prompt = t.trim().split("\n").pop().trim();
   // Nome da OLT no prompt (ex.: "ZXAN#", "OLT(config)#", "typ:isadmin>#"): base para reconhecer o fim das respostas
   const base = prompt.replace(/[>#$%]+\s*$/, "").replace(/\(.*$/, "");
-  s.promptRe = new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,40}[>#$%]\\s*$");
+  s.promptRe = new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,40}[>#$%]{1,2}\\s*$");
   return { sessao: s, prompt, banner: banner.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 3).join(" ") };
+}
+
+// Modo privilegiado (V-SOL: prompt ">" pede "enable" e a senha admin). Se não pedir senha, segue.
+async function enable(sessao, senhaAdmin) {
+  sessao.enviar("enable");
+  const t = await sessao.esperar(new RegExp(`${PASS_RE.source}|${(sessao.promptRe || PROMPT_RE).source}`, "i"), 10000);
+  if (PASS_RE.test(t)) {
+    sessao.enviar(senhaAdmin || "");
+    const r = await sessao.esperar(new RegExp(`${(sessao.promptRe || PROMPT_RE).source}|${FALHA_RE.source}|${PASS_RE.source}`, "i"), 10000);
+    if (FALHA_RE.test(r) || PASS_RE.test(r)) throw new Error("senha admin (enable) recusada pela OLT");
+  }
 }
 
 // Executa comandos e devolve a saída de cada um (sem o eco do comando e sem o prompt final)
@@ -101,4 +113,4 @@ async function executar(sessao, comandos, ms = 30000) {
   return saidas;
 }
 
-module.exports = { login, executar };
+module.exports = { login, enable, executar };
