@@ -352,3 +352,23 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .ev-tag.diag-problema { color: var(--bad); }
 .quedas-resumo { display: flex; flex-direction: column; gap: 6px; }
 .quedas-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Tráfego e sinal da ONU (página do dispositivo) */
+.graf-periodo { margin-left: auto; display: flex; gap: 6px; }
+.graf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.graf-box { position: relative; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.graf-titulo { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.graf-svg { width: 100%; height: auto; display: block; }
+.graf-faixa { width: 100%; height: 12px; display: block; margin-top: 4px; }
+.graf-grade { stroke: var(--border); stroke-width: 1; }
+.graf-txt { fill: var(--muted); font-size: 10.5px; }
+.graf-cursor { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.graf-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.graf-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.graf-leg i.hach { background: repeating-linear-gradient(45deg, #eef1f6 0 3px, #c9cfda 3px 5px); }
+.graf-leg b { color: var(--text); }
+.graf-vazio { color: var(--muted); font-size: 12.5px; padding: 40px 0; text-align: center; }
+.graf-dica { display: none; position: absolute; top: 28px; width: 180px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 6px 8px; font-size: 12px; pointer-events: none; z-index: 2; }
+@media (max-width: 600px) { .graf-periodo { margin-left: 0; width: 100%; } }
+#sinal-card .card-head { flex-wrap: wrap; gap: 6px 12px; justify-content: flex-start; align-items: center; }

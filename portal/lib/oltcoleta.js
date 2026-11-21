@@ -70,7 +70,7 @@ async function historicoZte(o, index) {
 
 // ---------- V-SOL EPON ----------
 const portasVsol = {};
-async function coletarVsol(o) {
+async function coletarVsol(o, vinc = new Set()) {
   // Portas EPON: lidas da configuração 1x por dia
   let portas = (portasVsol[o.id] && Date.now() - portasVsol[o.id].em < 86400000) ? portasVsol[o.id].portas : null;
   if (!portas) {
@@ -79,7 +79,12 @@ async function coletarVsol(o) {
     portasVsol[o.id] = { portas, em: Date.now() };
   }
   const cmds = ["configure terminal"];
-  for (const p of portas) cmds.push(`interface epon ${p}`, "show onu status");
+  for (const p of portas) {
+    cmds.push(`interface epon ${p}`, "show onu status", "show onu opm-diag");
+    // tráfego: só das ONUs ligadas a aparelhos do ACS (1 comando por ONU)
+    const pre = `${o.id}|${p}:`;
+    for (const k of vinc) if (k.startsWith(pre) && /^\d+$/.test(k.slice(pre.length))) cmds.push(`show onu ${k.slice(pre.length)} statistics`);
+  }
   const r = await olts.lerComandos(o.id, cmds);
   const onus = [];
   let offset = null; // diferença (ms) entre o relógio da OLT e o real
@@ -93,6 +98,27 @@ async function coletarVsol(o) {
       if (m[3] === "online" && reg && offset === null) offset = reg + (hh * 3600 + mm * 60 + ss) * 1000 - Date.now();
       onus.push({ index: `${m[1]}:${m[2]}`, mac: normMac(m[4]), online: m[3] === "online", estadoOlt: m[3],
         causa: m[3] === "online" ? null : causaDe(m[7]) || "outro", ultimaQuedaOlt: dataOlt(m[6]), motivo: m[7] === "N/A" ? null : m[7] });
+    }
+  }
+  // Sinal (RX da ONU, dBm) e contadores de bytes. rx_good = recebido pela OLT (upload); tx_good = enviado (download)
+  const porIdx = new Map(onus.map((x) => [x.index, x]));
+  let porta = null;
+  for (const s of r.saidas) {
+    const pi = s.comando.match(/^interface epon (\S+)$/);
+    if (pi) { porta = pi[1]; continue; }
+    if (s.comando === "show onu opm-diag") {
+      // ONU-ID  Temperature  Voltage  Bias  TX Power  RX Power
+      for (const l of s.saida.split("\n")) {
+        const m = l.trim().match(/^EPON(\S+):(\d+)\s+-?[\d.]+\s+[\d.]+\s+[\d.]+\s+-?[\d.]+\s+(-?[\d.]+)\s*$/);
+        const x = m && porIdx.get(`${m[1]}:${m[2]}`);
+        if (x) x.medida = { ...(x.medida || {}), rx: Number(m[3]), lado: "onu" };
+      }
+    }
+    const st = s.comando.match(/^show onu (\d+) statistics$/);
+    if (st && porta) {
+      const up = s.saida.match(/rx_good_octets\s*=\s*(\d+)/), down = s.saida.match(/tx_good_octets\s*=\s*(\d+)/);
+      const x = porIdx.get(`${porta}:${st[1]}`);
+      if (x && up && down) x.medida = { ...(x.medida || {}), up: Number(up[1]), down: Number(down[1]) };
     }
   }
   // Corrige as datas da OLT com o relógio real
@@ -156,7 +182,7 @@ async function coletarZteSnmp(o) {
   for (const [nome, oid] of Object.entries(ZTE_OID)) for (const vb of t[oid]) {
     const p = ultimo(vb.oid), pon = Number(p[p.length - 2]), id = p[p.length - 1];
     const index = `${(pon >>> 16) & 0xff}/${(pon >>> 8) & 0xff}/${pon & 0xff}:${id}`;
-    (por[index] = por[index] || { index })[nome] = vb.value;
+    (por[index] = por[index] || { index, ref: `${pon}.${id}` })[nome] = vb.value;
   }
   return Object.values(por).filter((x) => x.fase !== undefined).map((x) => {
     const estado = ZTE_FASE[x.fase] || `fase ${x.fase}`;
@@ -165,7 +191,7 @@ async function coletarZteSnmp(o) {
     // ONU autorizada por senha/LOID não tem serial nessa tabela: mantém o que o Telnet já leu
     let sn = snDeHex(x.sn);
     if (!sn) sn = (load().onus[`${o.id}|${x.index}`] || {}).sn || "";
-    return { index: x.index, sn, online, estadoOlt: estado,
+    return { index: x.index, ref: x.ref, sn, online, estadoOlt: estado,
       causa: online ? null : causaDe(estado) || "outro", ultimaQueda: motivo ? dataZte(x.caiu) : null, motivo };
   });
 }
@@ -191,10 +217,71 @@ async function coletarNokiaSnmp(o) {
   }
   return lista.map((x) => {
     const mot = x.online ? null : x.motivo !== undefined ? x.motivo : (x.ant && x.ant.motivo) || null;
-    return { index: x.index, sn: x.sn, online: x.online, estadoOlt: x.online ? "up" : "down", rx: null,
+    return { index: x.index, ref: x.ifx, sn: x.sn, online: x.online, estadoOlt: x.online ? "up" : "down", rx: null,
       causa: x.online ? null : causaDe(mot) || "outro", motivo: mot };
   });
 }
+
+// ---------- Sinal e tráfego das ONUs ligadas a aparelhos do ACS ----------
+// Guardado em data/olt-series.json: um ponto por coleta (10 min), 7 dias.
+//   ZTE (SNMP):  RX na OLT 500.1.2.4.2.1.2 (milésimos de dBm; -80000 = sem sinal);
+//                bytes 500.10.2.3.2.2.1.2 (entrada = upload) e .28 (saída = download) — conferidos com "show interface"
+//   Nokia (SNMP): RX na OLT 637.61.1.35.10.18.1.2 (décimos de dBm); a ISAM não tem contador de tráfego por ONT
+//   V-SOL (Telnet): RX na ONU ("show onu opm-diag") e bytes por ONU ("show onu N statistics")
+const SFILE = path.join(path.dirname(USERS_FILE), "olt-series.json");
+const SERIE_DIAS = 7;
+let sdb = null;
+function loadS() {
+  if (sdb) return sdb;
+  try { sdb = JSON.parse(fs.readFileSync(SFILE, "utf8")); } catch { sdb = {}; }
+  return sdb;
+}
+function saveS() {
+  fs.writeFileSync(SFILE + ".tmp", JSON.stringify(sdb), { mode: 0o600 });
+  fs.renameSync(SFILE + ".tmp", SFILE);
+}
+async function medirSnmp(o, onus, vinc) {
+  const alvo = onus.filter((x) => x.ref != null && vinc.has(`${o.id}|${x.index}`));
+  if (!alvo.length) return;
+  if (o.tipo === "zte") {
+    const oids = alvo.flatMap((x) => [`1.3.6.1.4.1.3902.1082.500.1.2.4.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.28.${x.ref}`]);
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, oids)) v[vb.oid] = vb.value;
+    for (const x of alvo) {
+      const rx = Number(v[`1.3.6.1.4.1.3902.1082.500.1.2.4.2.1.2.${x.ref}`]);
+      const up = v[`1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.2.${x.ref}`], down = v[`1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.28.${x.ref}`];
+      x.medida = { rx: rx > -50000 && rx < 10000 ? Math.round(rx / 10) / 100 : null, lado: "olt",
+        up: typeof up === "number" ? up : null, down: typeof down === "number" ? down : null };
+    }
+  } else if (o.tipo === "nokia") {
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `1.3.6.1.4.1.637.61.1.35.10.18.1.2.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
+    for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: rx > -500 && rx < 100 ? rx / 10 : null, lado: "olt" }; }
+  }
+}
+function registrarSerie(key, agora, x) {
+  const s = (sdb[key] = sdb[key] || { pts: [] });
+  const m = x.medida || {};
+  let down = null, up = null;
+  if (m.up != null && m.down != null) {
+    const t = Date.parse(agora);
+    if (s.cnt && t > s.cnt.t && t - s.cnt.t < 3 * 3600000) {
+      const dt = (t - s.cnt.t) / 1000, dd = m.down - s.cnt.down, du = m.up - s.cnt.up;
+      if (dd >= 0 && du >= 0) { down = Math.round((dd * 8) / dt); up = Math.round((du * 8) / dt); } // contador zerado: pula
+    }
+    s.cnt = { t, down: m.down, up: m.up };
+  }
+  if (m.lado) s.lado = m.lado;
+  s.pts.push([agora, m.rx ?? null, down, up, x.online ? "on" : x.causa || "off"]);
+}
+function limparSeries() {
+  const limite = new Date(Date.now() - SERIE_DIAS * 86400000).toISOString();
+  for (const k of Object.keys(sdb)) {
+    sdb[k].pts = sdb[k].pts.filter((p) => p[0] >= limite);
+    if (!sdb[k].pts.length) delete sdb[k];
+  }
+}
+
+// Quem fornece a lista de aparelhos do ACS (definido em iniciar); usado para saber quais ONUs medir
+let aparelhosFn = null;
 
 // ---------- Coleta geral ----------
 let rodando = false;
@@ -203,7 +290,14 @@ async function coletar(forcar = false) {
   if (rodando) return;
   rodando = true;
   load();
+  loadS();
   const agora = new Date().toISOString();
+  // ONUs ligadas a aparelhos do ACS (as únicas que ganham gráfico de sinal/tráfego)
+  const vinc = new Set();
+  if (aparelhosFn) {
+    try { for (const d of await aparelhosFn()) { const k = acharOnu(d); if (k) vinc.add(k.key); } }
+    catch (e) { console.error("coleta OLT: lista de aparelhos:", e.message); }
+  }
   try {
     for (const o of olts.listar()) {
       const ult = db.coletas[o.id];
@@ -224,12 +318,14 @@ async function coletar(forcar = false) {
         }
         if (!onus) {
           if (o.tipo === "zte") onus = await coletarZte(o);
-          else if (o.tipo === "vsol") ({ onus, ...extra } = await coletarVsol(o));
+          else if (o.tipo === "vsol") ({ onus, ...extra } = await coletarVsol(o, vinc));
           else if (o.tipo === "nokia") onus = await coletarNokia(o);
           else continue;
           extra.via = "telnet";
         }
+        if (extra.via === "snmp") { try { await medirSnmp(o, onus, vinc); } catch (e) { extra.medidaErro = e.message; } }
         extra.segundos = Math.round((Date.now() - t0) / 100) / 10;
+        for (const x of onus) { const key = `${o.id}|${x.index}`; if (vinc.has(key)) registrarSerie(key, agora, x); }
         const vistos = new Set();
         for (const x of onus) {
           const key = `${o.id}|${x.index}`;
@@ -259,6 +355,8 @@ async function coletar(forcar = false) {
       if (!db.historico[k].length) delete db.historico[k];
     }
     save();
+    limparSeries();
+    saveS();
   } finally { rodando = false; }
 }
 
@@ -326,9 +424,25 @@ function resumo() {
   return { coletas: db.coletas, intervaloMin: INTERVALO_MIN, intervaloTipo: INTERVALO_TIPO, onus: Object.keys(db.onus).length };
 }
 
-function iniciar() {
+// Série de sinal/tráfego da ONU ligada ao aparelho (para os gráficos da página do dispositivo)
+function serieDoAparelho(device, horas = 24) {
+  const onu = acharOnu(device);
+  if (!onu) return { onu: null, pontos: [] };
+  const s = loadS()[onu.key] || { pts: [] };
+  const desde = new Date(Date.now() - Math.min(Math.max(Number(horas) || 24, 1), SERIE_DIAS * 24) * 3600000).toISOString();
+  const temTrafego = onu.oltTipo !== "nokia";
+  return {
+    onu: { olt: onu.oltNome, tipo: onu.oltTipo, index: onu.index, online: onu.online, causa: onu.causa, visto: onu.visto },
+    lado: s.lado || (onu.oltTipo === "vsol" ? "onu" : "olt"), temTrafego, intervaloMin: INTERVALO_MIN,
+    pontos: s.pts.filter((p) => p[0] >= desde).map(([t, rx, down, up, st]) => ({ t, rx, down, up, st })),
+  };
+}
+
+// listarAparelhos: função que devolve os aparelhos do ACS (para saber quais ONUs medir)
+function iniciar(listarAparelhos) {
+  aparelhosFn = listarAparelhos || null;
   setTimeout(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), 20000);
   setInterval(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), INTERVALO_MIN * 60000).unref();
 }
 
-module.exports = { coletar, onuDoAparelho, acharOnu, confirmarEventos, resumo, iniciar, causaDe };
+module.exports = { coletar, onuDoAparelho, acharOnu, confirmarEventos, resumo, iniciar, causaDe, serieDoAparelho };

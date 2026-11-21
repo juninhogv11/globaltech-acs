@@ -666,10 +666,12 @@ async function pageDevice(id) {
     </div>
     <div class="card diag-card" id="diag-card"><div class="card-head"><h2>Diagnóstico e assistente</h2><span class="muted">analisando…</span></div></div>
     <div class="card diag-card" id="ev-card"><div class="card-head"><h2>Quedas e reinícios</h2><span class="muted">carregando…</span></div></div>
+    <div class="card diag-card" id="sinal-card"><div class="card-head"><h2>Tráfego e sinal</h2><span class="muted">carregando…</span></div></div>
     ${speedSection(st, d.online)}
     ${lanSection(lan, d.online)}`;
   loadDiagnostico(id);
   loadEventos(id);
+  loadSinal(id);
 
   // Teste em andamento (inclusive se a página foi redesenhada no meio dele)
   if (st.running) watchSpeedtest(st.running.id, st.running.type);
@@ -914,6 +916,140 @@ async function loadEventos(id) {
       }).join("")}</tbody></table></div>`
       : `<div class="empty">${r.indisponivel ? "Não foi possível consultar o histórico no servidor do ACS." : "Nenhum reinício registrado (histórico desde 17/11/2026, guarda 45 dias)."}</div>`}
     <p class="muted" style="font-size:12px;margin:10px 0 0">A causa "OLT" vem do dying gasp/LOS lido nas OLTs cadastradas (a cada 10 min). Sem ela, o ACS sozinho não diferencia falta de energia de tirar da tomada.</p>`;
+}
+
+// ---------- Sinal e tráfego da ONU (lidos na OLT a cada coleta) ----------
+let sinalHoras = 24;
+const fmtBps = (b) => (b == null ? "—" : b >= 1e6 ? `${(b / 1e6).toFixed(b >= 1e7 ? 0 : 1)} Mbps` : b >= 1e3 ? `${Math.round(b / 1e3)} kbps` : `${Math.round(b)} bps`);
+const fmtDbm = (v) => (v == null ? "—" : `${v.toFixed(2)} dBm`);
+const ST_COR = { on: "var(--good)", energia: "#2f6fd6", fibra: "var(--bad)", off: "var(--none)", outro: "var(--none)" };
+const ST_NOME = { on: "Online", energia: "Sem energia", fibra: "Sem fibra", off: "Offline", outro: "Offline" };
+
+// Gráfico de linhas em SVG (sem bibliotecas). series: [{ key, nome, cor }]; os buracos (sem leitura) quebram a linha.
+function graficoSvg(pts, series, { ini, fim, fmt, zero = false, passoMs }) {
+  const W = 640, H = 170, L = 62, R = 10, T = 10, B = 24;
+  const vals = pts.flatMap((p) => series.map((s) => p[s.key])).filter((v) => v != null);
+  if (!vals.length) return `<div class="graf-vazio">Sem leituras neste período.</div>`;
+  let min = Math.min(...vals), max = Math.max(...vals);
+  if (zero) min = 0;
+  if (max - min < 1e-9) { max += zero ? 1 : 0.5; if (!zero) min -= 0.5; }
+  if (zero) {
+    // escala "redonda" (1, 2, 2,5 ou 5 × 10^n por divisão)
+    const bruto = (max * 1.05) / 4, e = Math.pow(10, Math.floor(Math.log10(bruto))), f = bruto / e;
+    max = 4 * e * (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10);
+  } else { const pad = (max - min) * 0.1; max += pad; min -= pad; }
+  const x = (t) => L + ((Date.parse(t) - ini) / (fim - ini)) * (W - L - R);
+  const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = min + ((max - min) * i) / 4, yy = y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="graf-grade"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end" class="graf-txt">${esc(fmt(v))}</text>`;
+  }
+  const passoH = fim - ini > 2 * 86400000 ? 24 : fim - ini > 12 * 3600000 ? 4 : 2;
+  const d0 = new Date(ini); d0.setMinutes(0, 0, 0);
+  for (let t = d0.getTime() + 3600000; t < fim; t += 3600000) {
+    const d = new Date(t);
+    if (d.getHours() % passoH) continue;
+    const xx = L + ((t - ini) / (fim - ini)) * (W - L - R);
+    if (xx < L + 18 || xx > W - R - 18) continue; // rótulo cortado na borda
+    const rot = passoH === 24 ? d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : `${String(d.getHours()).padStart(2, "0")}:00`;
+    g += `<line x1="${xx}" x2="${xx}" y1="${T}" y2="${H - B}" class="graf-grade"/><text x="${xx}" y="${H - 6}" text-anchor="middle" class="graf-txt">${rot}</text>`;
+  }
+  for (const s of series) {
+    let d = "", ant = null;
+    for (const p of pts) {
+      const v = p[s.key];
+      if (v == null) { ant = null; continue; }
+      const salto = !ant || Date.parse(p.t) - Date.parse(ant.t) > passoMs * 2.5;
+      d += `${salto ? "M" : "L"}${x(p.t).toFixed(1)},${y(v).toFixed(1)}`;
+      ant = p;
+    }
+    // ponto isolado: desenha um círculo para aparecer
+    g += `<path d="${d}" fill="none" stroke="${s.cor}" stroke-width="1.8" stroke-linejoin="round"/>`;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], v = p[s.key];
+      if (v == null) continue;
+      const a = pts[i - 1], b = pts[i + 1];
+      const sozinho = (!a || a[s.key] == null || Date.parse(p.t) - Date.parse(a.t) > passoMs * 2.5) && (!b || b[s.key] == null || Date.parse(b.t) - Date.parse(p.t) > passoMs * 2.5);
+      if (sozinho) g += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.2" fill="${s.cor}"/>`;
+    }
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" class="graf-svg" data-ini="${ini}" data-fim="${fim}" data-l="${L}" data-r="${R}" data-w="${W}">${g}
+    <line class="graf-cursor" x1="0" x2="0" y1="${T}" y2="${H - B}" style="display:none"/></svg>`;
+}
+
+// Faixa de estado (online / sem energia / sem fibra / offline); sem leitura = listrado
+function faixaEstado(pts, ini, fim, passoMs) {
+  const W = 640, L = 62, R = 10;
+  const x = (t) => L + ((t - ini) / (fim - ini)) * (W - L - R);
+  let g = `<rect x="${L}" y="0" width="${W - L - R}" height="12" fill="url(#hach)"/>`;
+  for (let i = 0; i < pts.length; i++) {
+    const t = Date.parse(pts[i].t), prox = pts[i + 1] ? Date.parse(pts[i + 1].t) : Math.min(t + passoMs, Date.now());
+    const ate = Math.min(prox, t + passoMs * 1.5);
+    g += `<rect x="${x(t).toFixed(1)}" y="0" width="${(Math.max(x(ate) - x(t), 1) + 0.6).toFixed(1)}" height="12" fill="${ST_COR[pts[i].st] || ST_COR.off}"/>`;
+  }
+  return `<svg viewBox="0 0 ${W} 12" class="graf-faixa"><defs><pattern id="hach" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#eef1f6"/><line x1="0" y1="0" x2="0" y2="6" stroke="#c9cfda" stroke-width="2"/></pattern></defs>${g}</svg>`;
+}
+
+async function loadSinal(id) {
+  const card = $("#sinal-card");
+  if (!card) return;
+  let r;
+  try { r = await api(`/devices/${enc(id)}/sinal?horas=${sinalHoras}`); } catch (e) { r = { erro: e.message, pontos: [] }; }
+  if (!$("#sinal-card")) return;
+  const pts = r.pontos || [];
+  const fim = Date.now(), ini = fim - sinalHoras * 3600000, passoMs = (r.intervaloMin || 10) * 60000;
+  const ult = (k) => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][k] != null) return pts[i][k]; return null; };
+  const maxDe = (k) => { const v = pts.map((p) => p[k]).filter((x) => x != null); return v.length ? Math.max(...v) : null; };
+  const minDe = (k) => { const v = pts.map((p) => p[k]).filter((x) => x != null); return v.length ? Math.min(...v) : null; };
+  const ladoTxt = r.lado === "onu" ? "Sinal recebido pela ONU (RX 1490 nm)" : "Sinal da ONU recebido na OLT (RX 1310 nm)";
+  const periodo = `<div class="graf-periodo">${[24, 72, 168].map((h) => `<button class="btn sm${h === sinalHoras ? " primary" : ""}" data-horas="${h}">${h === 168 ? "7 dias" : h === 72 ? "3 dias" : "24 h"}</button>`).join("")}</div>`;
+  if (!r.onu) {
+    card.innerHTML = `<div class="card-head"><h2>Tráfego e sinal</h2></div>
+      <div class="muted" style="font-size:12.5px">${r.erro ? esc(r.erro) : "ONU não encontrada nas OLTs cadastradas: sem gráfico de sinal e tráfego."}</div>`;
+    return;
+  }
+  const trafego = r.temTrafego ? `
+    <div class="graf-box"><div class="graf-titulo">Tráfego</div>
+      ${graficoSvg(pts, [{ key: "down", nome: "Download", cor: "#2f6fd6" }, { key: "up", nome: "Upload", cor: "#e8890c" }], { ini, fim, fmt: fmtBps, zero: true, passoMs })}
+      <div class="graf-leg"><span><i style="background:#2f6fd6"></i>Download · atual <b>${fmtBps(ult("down"))}</b> · máximo ${fmtBps(maxDe("down"))}</span>
+        <span><i style="background:#e8890c"></i>Upload · atual <b>${fmtBps(ult("up"))}</b> · máximo ${fmtBps(maxDe("up"))}</span></div></div>`
+    : `<div class="graf-box"><div class="graf-titulo">Tráfego</div><div class="graf-vazio">A OLT Nokia não informa o tráfego por ONU.</div></div>`;
+  card.innerHTML = `
+    <div class="card-head"><h2>Tráfego e sinal</h2><span class="muted">OLT ${esc(r.onu.olt)} · ONU <code>${esc(r.onu.index)}</code> · leitura a cada ${r.intervaloMin || 10} min</span>${periodo}</div>
+    <div class="graf-grid">
+      ${trafego}
+      <div class="graf-box"><div class="graf-titulo">Sinal e estado</div>
+        ${graficoSvg(pts, [{ key: "rx", nome: "RX", cor: "#7a4fd6" }], { ini, fim, fmt: (v) => v.toFixed(1).replace("-", "−"), passoMs })}
+        ${faixaEstado(pts, ini, fim, passoMs)}
+        <div class="graf-leg"><span><i style="background:#7a4fd6"></i>${ladoTxt} · atual <b>${fmtDbm(ult("rx"))}</b> · melhor ${fmtDbm(maxDe("rx"))} · pior ${fmtDbm(minDe("rx"))}</span></div>
+        <div class="graf-leg">${["on", "energia", "fibra", "off"].map((k) => `<span><i style="background:${ST_COR[k]}"></i>${ST_NOME[k]}</span>`).join("")}<span><i class="hach"></i>Sem leitura</span></div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">${pts.length ? "Tráfego = média de cada intervalo de 10 min (picos curtos ficam menores que o real)." : "O histórico começa a ser gravado agora: o primeiro ponto aparece na próxima leitura da OLT (até 10 min)."} Guardado por 7 dias.</p>`;
+  card.querySelectorAll("[data-horas]").forEach((b) => b.addEventListener("click", () => { sinalHoras = Number(b.dataset.horas); loadSinal(id); }));
+  // Cursor: mostra os valores do ponto mais perto
+  card.querySelectorAll(".graf-svg").forEach((svg) => {
+    const box = svg.parentElement;
+    const dica = document.createElement("div"); dica.className = "graf-dica"; box.appendChild(dica);
+    const cur = svg.querySelector(".graf-cursor");
+    svg.addEventListener("mousemove", (ev) => {
+      const rc = svg.getBoundingClientRect(), W = 640, L = 62, R = 10;
+      const px = ((ev.clientX - rc.left) / rc.width) * W;
+      const t = ini + ((px - L) / (W - L - R)) * (fim - ini);
+      let best = null;
+      for (const p of pts) if (!best || Math.abs(Date.parse(p.t) - t) < Math.abs(Date.parse(best.t) - t)) best = p;
+      if (!best || Math.abs(Date.parse(best.t) - t) > passoMs * 1.5) { dica.style.display = "none"; cur.style.display = "none"; return; }
+      const bx = L + ((Date.parse(best.t) - ini) / (fim - ini)) * (W - L - R);
+      cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.style.display = "";
+      dica.innerHTML = `<b>${esc(new Date(best.t).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</b><br>
+        ${r.temTrafego ? `Download ${fmtBps(best.down)} · Upload ${fmtBps(best.up)}<br>` : ""}RX ${fmtDbm(best.rx)} · ${ST_NOME[best.st] || best.st}`;
+      dica.style.display = "block";
+      const left = (bx / W) * rc.width;
+      dica.style.left = `${Math.min(Math.max(left - 90, 0), rc.width - 180)}px`;
+    });
+    svg.addEventListener("mouseleave", () => { dica.style.display = "none"; cur.style.display = "none"; });
+  });
 }
 
 // ---------- Firmware: arquivos por modelo e atualização ----------

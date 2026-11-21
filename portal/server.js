@@ -14,7 +14,7 @@ const backup = require("./lib/backup");
 const diagnostico = require("./lib/diagnostico");
 const olts = require("./lib/olts");
 const oltcoleta = require("./lib/oltcoleta");
-oltcoleta.iniciar();
+oltcoleta.iniciar(() => devices.all());
 const assistente = require("./lib/assistente");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
@@ -113,6 +113,11 @@ async function eventosDe(id, doc) {
   return r;
 }
 
+// Sinal (RX) e tráfego da ONU do aparelho, lidos na OLT a cada coleta (gráficos da página do dispositivo)
+api.get("/api/devices/:id/sinal", async (req, res) => {
+  const doc = await nbi.device(req.params.id);
+  res.json(oltcoleta.serieDoAparelho(devices.normalize(doc), req.query.horas));
+});
 api.get("/api/devices/:id/eventos", async (req, res) => res.json(await eventosDe(req.params.id, await nbi.device(req.params.id))));
 api.post("/api/olts/coletar", async (req, res) => { await oltcoleta.coletar(true); res.json(oltcoleta.resumo()); });
 
