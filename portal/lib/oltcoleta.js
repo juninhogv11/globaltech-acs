@@ -30,7 +30,7 @@ function save() {
 function causaDe(txt) {
   const t = String(txt || "").toLowerCase();
   if (!t || t === "n/a" || t === "-") return null;
-  if (/dying.?gasp/.test(t)) return "energia";
+  if (/dying.?gasp|power.?(off|down|fail)/.test(t)) return "energia"; // V-SOL: "Power Off"
   if (/\blos\b|losi|lofi|loss.?of.?signal|ploam|lof\b|loss.?of.?frame|sf\b|signal.?fail|mpcp|timeout|optical/.test(t)) return "fibra";
   return "outro";
 }
@@ -86,7 +86,7 @@ async function coletarVsol(o) {
   const dataOlt = (s) => (/^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d$/.test(s) ? Date.parse(s.replace(/\//g, "-").replace(" ", "T") + "-03:00") : null);
   for (const s of r.saidas.filter((x) => x.comando === "show onu status")) {
     for (const l of s.saida.split("\n")) {
-      const m = l.trim().match(/^EPON(\S+):(\d+)\s+(online|offline)\s+(\S+)\s+\S+\s+\S+\s+(N\/A|\d{4}\/\S+ \S+)\s+(N\/A|\d{4}\/\S+ \S+)\s+(\S+)\s+(\d+:\d\d:\d\d)/i);
+      const m = l.trim().match(/^EPON(\S+):(\d+)\s+(online|offline)\s+(\S+)\s+\S+\s+\S+\s+(N\/A|\d{4}\/\S+ \S+)\s+(N\/A|\d{4}\/\S+ \S+)\s+(\S.*?)\s+(\d+:\d\d:\d\d)/i); // motivo pode ter espaço ("Power Off")
       if (!m) continue;
       const reg = dataOlt(m[5]);
       const [hh, mm, ss] = m[8].split(":").map(Number);
