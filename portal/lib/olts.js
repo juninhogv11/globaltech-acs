@@ -165,4 +165,26 @@ async function snmpWalk(id, oid, max = 300) {
   return snmp.walk(o.ip, o.snmpPorta, decifrar(o.community), String(oid), Math.min(Number(max) || 300, 5000), versaoSnmp(o));
 }
 
-module.exports = { TIPOS, listar, salvar, remover, testar, lerComandos, snmpWalk };
+// Coleta por SNMP (só leitura, GETBULK no v2c): lê colunas inteiras de tabelas. Passa pela mesma fila
+// da OLT para não somar com Telnet/teste ao mesmo tempo.
+async function snmpColunas(id, oids, max = 20000) {
+  const o = buscar(id);
+  if (!o.community) throw bad("Community não cadastrada.");
+  return naFila(o.id, async () => {
+    const out = {};
+    for (const oid of oids) out[oid] = await snmp.bulkWalk(o.ip, o.snmpPorta, decifrar(o.community), oid, max, versaoSnmp(o));
+    return out;
+  });
+}
+// GET em lotes de 20 OIDs por pacote
+async function snmpGetLote(id, oids) {
+  const o = buscar(id);
+  if (!o.community) throw bad("Community não cadastrada.");
+  return naFila(o.id, async () => {
+    const out = [];
+    for (let i = 0; i < oids.length; i += 20) out.push(...await snmp.get(o.ip, o.snmpPorta, decifrar(o.community), oids.slice(i, i + 20), 4000, versaoSnmp(o)));
+    return out;
+  });
+}
+
+module.exports = { TIPOS, listar, salvar, remover, testar, lerComandos, snmpWalk, snmpColunas, snmpGetLote };

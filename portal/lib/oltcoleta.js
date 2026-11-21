@@ -1,5 +1,5 @@
 "use strict";
-// Coleta das ONUs nas OLTs (Telnet, só leitura) e histórico de quedas com a causa vista pela OLT.
+// Coleta das ONUs nas OLTs (SNMP para ZTE e Nokia, Telnet para V-SOL e como reserva; só leitura) e histórico de quedas com a causa vista pela OLT.
 //   ZTE C610:   show gpon onu state + baseinfo por PON; histórico (10 últimas quedas) via detail-info
 //   V-SOL EPON: show onu status por porta (MAC, estado, última queda e motivo; relógio da OLT corrigido)
 //   Nokia ISAM: show equipment ont status pon + operational-data (down-reason)
@@ -121,6 +121,81 @@ async function coletarNokia(o) {
   return onus;
 }
 
+// ---------- Coleta por SNMP (ZTE e Nokia) ----------
+// Mais leve que o Telnet: sem login nem sessão de console, poucas centenas de linhas por GETBULK.
+// A V-SOL continua no Telnet: o agente SNMP dela é lento, perde pedidos e já travou (Córrego Preto).
+const snDeHex = (v) => {
+  const s = String(v || "");
+  // o leitor SNMP devolve texto quando os bytes formam UTF-8 válido (ex.: "TPLG" + 51 7B D3 A0): volta aos bytes
+  const b = /^[0-9a-f]{16}$/i.test(s) ? Buffer.from(s, "hex") : Buffer.from(s, "utf8");
+  if (b.length !== 8) return normSn(s);
+  if (!/^[A-Z0-9]{4}$/.test(b.subarray(0, 4).toString("latin1"))) return ""; // sem serial (ONU por senha/LOID)
+  return b.subarray(0, 4).toString("latin1") + b.subarray(4).toString("hex").toUpperCase();
+};
+const ultimo = (oid) => oid.split(".");
+// Data em OCTET STRING da ZTE (ano 2 bytes, mês, dia, hora, min, seg) — relógio da C610 em UTC
+function dataZte(h) {
+  if (!/^[0-9a-f]{14,16}$/i.test(String(h || ""))) return null;
+  const b = Buffer.from(h, "hex");
+  const ano = b.readUInt16BE(0);
+  if (ano < 2000) return null;
+  return new Date(Date.UTC(ano, b[2] - 1, b[3], b[4], b[5], b[6])).toISOString();
+}
+
+const ZTE_OID = {
+  sn: "1.3.6.1.4.1.3902.1082.500.20.2.1.2.1.3",       // .<ifIndex PON>.<id ONU>
+  fase: "1.3.6.1.4.1.3902.1082.500.10.2.3.8.1.4",
+  caiu: "1.3.6.1.4.1.3902.1082.500.10.2.3.8.1.6",
+  causa: "1.3.6.1.4.1.3902.1082.500.10.2.3.8.1.7",
+};
+const ZTE_FASE = { 1: "logging", 2: "LOS", 3: "syncMib", 4: "working", 5: "DyingGasp", 6: "authFailed", 7: "OffLine" };
+const ZTE_CAUSA = { 2: "LOS", 3: "LOSi", 9: "DyingGasp" }; // conferido com o "detail-info" do Telnet
+async function coletarZteSnmp(o) {
+  const t = await olts.snmpColunas(o.id, Object.values(ZTE_OID));
+  const por = {};
+  for (const [nome, oid] of Object.entries(ZTE_OID)) for (const vb of t[oid]) {
+    const p = ultimo(vb.oid), pon = Number(p[p.length - 2]), id = p[p.length - 1];
+    const index = `${(pon >>> 16) & 0xff}/${(pon >>> 8) & 0xff}/${pon & 0xff}:${id}`;
+    (por[index] = por[index] || { index })[nome] = vb.value;
+  }
+  return Object.values(por).filter((x) => x.fase !== undefined).map((x) => {
+    const estado = ZTE_FASE[x.fase] || `fase ${x.fase}`;
+    const online = Number(x.fase) === 4;
+    const motivo = ZTE_CAUSA[x.causa] || null;
+    // ONU autorizada por senha/LOID não tem serial nessa tabela: mantém o que o Telnet já leu
+    let sn = snDeHex(x.sn);
+    if (!sn) sn = (load().onus[`${o.id}|${x.index}`] || {}).sn || "";
+    return { index: x.index, sn, online, estadoOlt: estado,
+      causa: online ? null : causaDe(estado) || "outro", ultimaQueda: motivo ? dataZte(x.caiu) : null, motivo };
+  });
+}
+
+const NOKIA_SN = "1.3.6.1.4.1.637.61.1.35.10.1.1.5";     // .<ifIndex ONT>
+const NOKIA_CAUSA_OID = "1.3.6.1.4.1.637.61.1.35.10.4.1.8"; // último motivo de queda (a ISAM calcula na hora: ~120 ms por ONT)
+const NOKIA_CAUSA = { 6: "signal-degrade", 9: "ploam-inactive", 12: "dying-gasp" }; // conferido com operational-data
+// ifIndex da ONT na ISAM: 0x05C00000 = LT 1/1/1; +65536 por PON; +512 por ONT
+const nokiaIndex = (x) => `1/1/${((x >>> 20) & 0xf) - 0xc + 1}/${((x >>> 16) & 0xf) + 1}/${((x & 0xffff) >>> 9) + 1}`;
+async function coletarNokiaSnmp(o) {
+  const sns = (await olts.snmpColunas(o.id, [NOKIA_SN]))[NOKIA_SN];
+  const lista = sns.map((vb) => ({ ifx: Number(ultimo(vb.oid).pop()), sn: snDeHex(vb.value) }));
+  const oper = await olts.snmpGetLote(o.id, lista.map((x) => `1.3.6.1.2.1.2.2.1.8.${x.ifx}`)); // IF-MIB ifOperStatus
+  const st = {}; for (const vb of oper) st[ultimo(vb.oid).pop()] = vb.value;
+  const ant = load().onus;
+  for (const x of lista) { x.index = nokiaIndex(x.ifx); x.online = Number(st[x.ifx]) === 1; x.ant = ant[`${o.id}|${x.index}`]; }
+  // Motivo só das ONTs que acabaram de cair (ou ainda sem motivo); as outras repetem o da leitura anterior
+  const pedir = lista.filter((x) => !x.online && (!x.ant || x.ant.online || !x.ant.motivo));
+  if (pedir.length) {
+    const r = await olts.snmpGetLote(o.id, pedir.map((x) => `${NOKIA_CAUSA_OID}.${x.ifx}`));
+    const c = {}; for (const vb of r) c[ultimo(vb.oid).pop()] = vb.value;
+    for (const x of pedir) { const v = Number(c[x.ifx]); x.motivo = NOKIA_CAUSA[v] || (v > 0 && v < 255 ? `código ${v}` : null); }
+  }
+  return lista.map((x) => {
+    const mot = x.online ? null : x.motivo !== undefined ? x.motivo : (x.ant && x.ant.motivo) || null;
+    return { index: x.index, sn: x.sn, online: x.online, estadoOlt: x.online ? "up" : "down", rx: null,
+      causa: x.online ? null : causaDe(mot) || "outro", motivo: mot };
+  });
+}
+
 // ---------- Coleta geral ----------
 let rodando = false;
 // forcar = true (botão "Ler ONUs agora"): lê todas, sem esperar o intervalo próprio de cada tipo
@@ -133,14 +208,28 @@ async function coletar(forcar = false) {
     for (const o of olts.listar()) {
       const ult = db.coletas[o.id];
       const minTipo = INTERVALO_TIPO[o.tipo];
-      if (!forcar && minTipo && ult && ult.ok && Date.now() - Date.parse(ult.em) < (minTipo - 1) * 60000) continue;
+      // O intervalo maior da Nokia vale só para o Telnet (lento); por SNMP ela é lida junto com as outras
+      if (!forcar && minTipo && ult && ult.ok && ult.via !== "snmp" && Date.now() - Date.parse(ult.em) < (minTipo - 1) * 60000) continue;
       const c = { em: agora, ok: false };
       try {
         let onus, extra = {};
-        if (o.tipo === "zte") onus = await coletarZte(o);
-        else if (o.tipo === "vsol") ({ onus, ...extra } = await coletarVsol(o));
-        else if (o.tipo === "nokia") onus = await coletarNokia(o);
-        else continue;
+        const t0 = Date.now();
+        if ((o.tipo === "zte" || o.tipo === "nokia") && o.temCommunity) {
+          // SNMP primeiro; se a OLT não responder, cai para o Telnet
+          try {
+            onus = o.tipo === "zte" ? await coletarZteSnmp(o) : await coletarNokiaSnmp(o);
+            if (!onus.length) throw new Error("tabela SNMP vazia");
+            extra.via = "snmp";
+          } catch (e) { extra.snmpErro = e.message; onus = null; }
+        }
+        if (!onus) {
+          if (o.tipo === "zte") onus = await coletarZte(o);
+          else if (o.tipo === "vsol") ({ onus, ...extra } = await coletarVsol(o));
+          else if (o.tipo === "nokia") onus = await coletarNokia(o);
+          else continue;
+          extra.via = "telnet";
+        }
+        extra.segundos = Math.round((Date.now() - t0) / 100) / 10;
         const vistos = new Set();
         for (const x of onus) {
           const key = `${o.id}|${x.index}`;

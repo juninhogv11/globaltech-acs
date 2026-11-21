@@ -1310,7 +1310,8 @@ async function pageOlts() {
     if (!c.ok) return `<span class="badge bad">erro</span> <span class="muted">${esc(c.erro || "")}</span>`;
     return `${c.onus} ONUs · <b style="color:var(--good)">${c.online}</b> online<br><span class="muted">offline: ${c.energia} sem energia · ${c.fibra} sem fibra · ${c.onus - c.online - c.energia - c.fibra} outros</span>
       ${c.offsetMin && Math.abs(c.offsetMin) > 5 ? `<br><span style="color:var(--warn);font-size:12px">relógio da OLT ${c.offsetMin > 0 ? "adiantado" : "atrasado"} ${Math.round(Math.abs(c.offsetMin) / 60)} h (corrigido)</span>` : ""}
-      <div class="muted" style="font-size:11.5px">${timeAgo(c.em)}</div>`;
+      <div class="muted" style="font-size:11.5px">${timeAgo(c.em)}${c.via ? ` · via ${c.via === "snmp" ? "SNMP" : "Telnet"}` : ""}${c.segundos != null ? ` em ${c.segundos} s` : ""}</div>
+      ${c.snmpErro ? `<div style="color:var(--warn);font-size:11.5px">SNMP falhou, lida pelo Telnet: ${esc(c.snmpErro)}</div>` : ""}`;
   };
   const teste = (t) => !t ? `<span class="muted">não testada</span>` : `
     <div>${t.snmp && t.snmp.ok ? `<span class="badge good">SNMP ok</span> <span class="muted">${esc(t.snmp.nome || "")}</span>` : `<span class="badge bad">SNMP</span> <span class="muted">${esc((t.snmp || {}).erro || "")}</span>`}</div>
@@ -1323,7 +1324,7 @@ async function pageOlts() {
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; Nokia ${((coleta || {}).intervaloTipo || {}).nokia || 30} min)</th><th></th></tr></thead>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP, V-SOL por Telnet)</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>

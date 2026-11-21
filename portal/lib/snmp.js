@@ -55,7 +55,8 @@ function decValue(buf, n) {
   const b = buf.subarray(n.start, n.end);
   switch (n.tag) {
     case 0x02: { let v = b.length && b[0] & 0x80 ? -1 : 0; for (const x of b) v = v * 256 + x; return v; }
-    case 0x04: { const s = b.toString("utf8"); return /^[\x09\x0a\x0d\x20-\x7e -￿]*$/.test(s) ? s : b.toString("hex"); }
+    // Texto só quando os bytes são UTF-8 válido de ida e volta; senão hex (ex.: serial GPON "TPLG" + 4 bytes binários)
+    case 0x04: { const s = b.toString("utf8"); return /^[\x09\x0a\x0d\x20-\x7e -￿]*$/.test(s) && !s.includes("�") && Buffer.from(s, "utf8").equals(b) ? s : b.toString("hex"); }
     case 0x05: return null;
     case 0x06: return decOid(b);
     case 0x40: return [...b].join(".");
@@ -69,11 +70,12 @@ function decValue(buf, n) {
 
 let reqId = Math.floor(Math.random() * 1e6);
 // versao: 1 = v2c (padrão), 0 = v1
-function request(pduTag, host, port, community, oids, timeout = 3000, tentativas = 2, versao = 1) {
+// GETBULK (0xa5): o 2º e o 3º inteiros são non-repeaters e max-repetitions
+function request(pduTag, host, port, community, oids, timeout = 3000, tentativas = 2, versao = 1, maxRep = 0) {
   return new Promise((resolve, reject) => {
     const id = ++reqId % 2147483647;
     const vbs = Buffer.concat(oids.map((o) => tlv(0x30, Buffer.concat([encOid(o), Buffer.from([0x05, 0x00])]))));
-    const pdu = tlv(pduTag, Buffer.concat([encInt(id), encInt(0), encInt(0), tlv(0x30, vbs)]));
+    const pdu = tlv(pduTag, Buffer.concat([encInt(id), encInt(0), encInt(maxRep), tlv(0x30, vbs)]));
     const msg = tlv(0x30, Buffer.concat([encInt(versao), tlv(0x04, Buffer.from(community)), pdu]));
     const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
     let n = 0, timer;
@@ -114,4 +116,22 @@ async function walk(h, p, c, base, max = 5000, versao = 1) {
   return out;
 }
 
-module.exports = { get, walk };
+// WALK com GETBULK (só v2c): até 30 linhas por pacote, muito mais leve para a OLT do que GETNEXT
+async function bulkWalk(h, p, c, base, max = 50000, versao = 1, rep = 30) {
+  if (versao !== 1) return walk(h, p, c, base, max, versao);
+  const raiz = base.replace(/^\./, "") + ".";
+  const out = [];
+  let oid = base.replace(/^\./, "");
+  while (out.length < max) {
+    const vbs = await request(0xa5, h, p, c, [oid], 4000, 2, versao, rep);
+    if (!vbs.length) break;
+    for (const vb of vbs) {
+      if ((vb.value && vb.value.erro) || !(vb.oid + ".").startsWith(raiz)) return out;
+      out.push(vb);
+    }
+    oid = vbs[vbs.length - 1].oid;
+  }
+  return out;
+}
+
+module.exports = { get, walk, bulkWalk };
