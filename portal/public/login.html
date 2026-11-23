@@ -6,44 +6,304 @@
   <title>Entrar · Globaltech ACS</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css?v=10">
+  <style>
+    /* Tela de login — estilos próprios (não afetam o resto do portal) */
+    .lg {
+      --ink: #0a1530;
+      --ink-2: #13224a;
+      --cyan: #00c2e8;
+      min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(380px, 1fr);
+      background: #fff;
+    }
+
+    /* ---------- Painel da marca ---------- */
+    .lg-hero {
+      position: relative; overflow: hidden; color: #dfe7ff;
+      background:
+        radial-gradient(120% 80% at 0% 100%, rgba(0, 194, 232, .22) 0%, transparent 55%),
+        radial-gradient(90% 70% at 100% 0%, rgba(31, 94, 255, .45) 0%, transparent 60%),
+        linear-gradient(160deg, var(--ink-2) 0%, var(--ink) 70%);
+      display: flex; flex-direction: column; justify-content: space-between; padding: 44px 52px;
+    }
+    .lg-hero::before { /* grade técnica */
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, .045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .045) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(ellipse at 60% 50%, #000 20%, transparent 75%);
+    }
+    .lg-net { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .lg-net .fiber { fill: none; stroke: rgba(122, 162, 255, .28); stroke-width: 1.2; }
+    .lg-net .pulse {
+      fill: none; stroke: var(--cyan); stroke-width: 2.2; stroke-linecap: round;
+      stroke-dasharray: 26 600; stroke-dashoffset: 626; filter: drop-shadow(0 0 5px var(--cyan));
+      animation: lg-flow 5.5s linear infinite;
+    }
+    .lg-net .pulse.p2 { animation-duration: 7s; animation-delay: -2.4s; stroke: #7aa2ff; filter: drop-shadow(0 0 5px #7aa2ff); }
+    .lg-net .pulse.p3 { animation-duration: 6.2s; animation-delay: -4.1s; }
+    .lg-net .node { fill: var(--ink); stroke: #7aa2ff; stroke-width: 1.5; }
+    .lg-net .node.core { fill: #1f5eff; stroke: #9fc0ff; }
+    .lg-net .halo { fill: none; stroke: var(--cyan); stroke-width: 1; opacity: 0; transform-box: fill-box; transform-origin: center; animation: lg-halo 3.2s ease-out infinite; }
+    @keyframes lg-flow { to { stroke-dashoffset: 0; } }
+    @keyframes lg-halo { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
+
+    .lg-top, .lg-copy, .lg-foot { position: relative; }
+    .lg-top { display: flex; align-items: center; gap: 12px; }
+    .lg-top img { width: 38px; height: 38px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 120, 255, .45); }
+    .lg-top b { color: #fff; font-size: 15px; letter-spacing: .01em; }
+    .lg-top small { display: block; color: #8fa3d6; font-size: 12px; }
+
+    .lg-copy { max-width: 470px; }
+    .lg-tag {
+      display: inline-flex; align-items: center; gap: 8px; font: 600 11px/1 ui-monospace, "Cascadia Code", Consolas, monospace;
+      text-transform: uppercase; letter-spacing: .14em; color: var(--cyan);
+      border: 1px solid rgba(0, 194, 232, .35); background: rgba(0, 194, 232, .08); padding: 7px 11px; border-radius: 999px;
+    }
+    .lg-tag i { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 0 rgba(0, 194, 232, .7); animation: lg-ping 2s infinite; }
+    @keyframes lg-ping { 70% { box-shadow: 0 0 0 7px rgba(0, 194, 232, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 194, 232, 0); } }
+    .lg-copy h1 { color: #fff; font-size: clamp(30px, 3.4vw, 44px); line-height: 1.08; letter-spacing: -.025em; margin: 20px 0 14px; font-weight: 700; }
+    .lg-copy h1 span { background: linear-gradient(90deg, #7aa2ff, var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lg-copy p { color: #a9b8e0; font-size: 15px; line-height: 1.6; margin: 0; }
+    .lg-feats { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 10px; }
+    .lg-feats li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: #c9d5f5; }
+    .lg-feats svg { flex-shrink: 0; width: 18px; height: 18px; color: var(--cyan); }
+
+    .lg-foot { font: 12px ui-monospace, "Cascadia Code", Consolas, monospace; color: #6d80b3; letter-spacing: .04em; }
+
+    /* ---------- Formulário ---------- */
+    .lg-side { display: grid; place-items: center; padding: 40px 24px; background: #fff; }
+    .lg-form { width: 100%; max-width: 360px; animation: lg-rise .5s cubic-bezier(.2, .8, .2, 1) both; }
+    @keyframes lg-rise { from { opacity: 0; transform: translateY(10px); } }
+    .lg-mobile-brand { display: none; }
+    .lg-form h2 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 6px; color: var(--ink); }
+    .lg-form .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+
+    .lg-field { margin-bottom: 16px; }
+    .lg-field label { display: block; font-size: 13px; font-weight: 600; color: #36405a; margin-bottom: 7px; }
+    .lg-input { position: relative; }
+    .lg-input > svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: #98a2b8; pointer-events: none; transition: color .15s; }
+    .lg-input input {
+      width: 100%; height: 46px; padding: 0 44px 0 42px; font-size: 15px; color: var(--text);
+      border: 1.5px solid var(--border); border-radius: 10px; background: #f8fafd; outline: none;
+      transition: border-color .15s, box-shadow .15s, background .15s;
+    }
+    .lg-input input:hover { border-color: #cfd6e4; }
+    .lg-input input:focus { border-color: var(--brand); background: #fff; box-shadow: 0 0 0 4px rgba(31, 94, 255, .14); }
+    .lg-input:focus-within > svg { color: var(--brand); }
+    .lg-eye {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px;
+      border: 0; background: transparent; border-radius: 8px; color: #8b95ab; cursor: pointer; display: grid; place-items: center;
+    }
+    .lg-eye:hover { background: #eef2f9; color: var(--text); }
+    .lg-eye:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .lg-eye svg { width: 18px; height: 18px; }
+    .lg-caps { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 12.5px; color: var(--warn); }
+    .lg [hidden] { display: none !important; }
+
+    .lg-err {
+      display: flex; gap: 10px; align-items: flex-start; background: #fff1f1; border: 1px solid #f8cccc; color: #b42323;
+      padding: 11px 13px; border-radius: 10px; font-size: 13.5px; margin-bottom: 18px;
+    }
+    .lg-err[hidden] { display: none; }
+    .lg-err svg { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+    .lg-shake { animation: lg-shake .38s; }
+    @keyframes lg-shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+
+    .lg-submit {
+      position: relative; width: 100%; height: 48px; margin-top: 10px; border: 0; border-radius: 10px; cursor: pointer;
+      font-size: 15px; font-weight: 600; color: #fff; letter-spacing: .01em;
+      background: linear-gradient(135deg, #1f5eff 0%, #1a7bff 55%, #00a8d6 100%);
+      box-shadow: 0 8px 22px -8px rgba(31, 94, 255, .75); transition: transform .12s, box-shadow .15s, filter .15s;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+    .lg-submit:hover { filter: brightness(1.06); box-shadow: 0 12px 26px -8px rgba(31, 94, 255, .85); }
+    .lg-submit:active { transform: translateY(1px); }
+    .lg-submit:focus-visible { outline: 3px solid rgba(31, 94, 255, .35); outline-offset: 2px; }
+    .lg-submit:disabled { cursor: wait; filter: saturate(.7); }
+    .lg-submit svg { width: 18px; height: 18px; transition: transform .15s; }
+    .lg-submit:hover:not(:disabled) svg { transform: translateX(3px); }
+    .lg-spin { width: 18px; height: 18px; border: 2.5px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%; animation: lg-rot .7s linear infinite; }
+    .lg-spin[hidden] { display: none; }
+    @keyframes lg-rot { to { transform: rotate(360deg); } }
+
+    .lg-note { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; }
+    .lg-note svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+    /* ---------- Telas pequenas ---------- */
+    @media (max-width: 900px) {
+      .lg { grid-template-columns: 1fr; background: linear-gradient(170deg, #13224a 0%, #0a1530 260px, #f3f5f9 260px); }
+      .lg-hero { display: none; }
+      .lg-side { align-items: start; padding: 28px 16px; background: transparent; }
+      .lg-form { background: #fff; border-radius: 16px; padding: 26px 22px; box-shadow: 0 18px 40px -12px rgba(10, 21, 48, .35); }
+      .lg-mobile-brand { display: flex; align-items: center; gap: 10px; margin: 0 0 22px; }
+      .lg-mobile-brand img { width: 34px; height: 34px; border-radius: 9px; }
+      .lg-mobile-brand small { display: block; color: var(--muted); font-size: 12px; }
+      .lg-side::before { content: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lg *, .lg *::before { animation: none !important; transition: none !important; }
+      .lg-net .pulse { display: none; }
+    }
+  </style>
 </head>
 <body>
-  <div class="login-page">
-    <form class="login-card" id="form">
-      <div class="brand">
-        <div class="brand-logo">G</div>
+  <main class="lg">
+    <!-- Painel da marca -->
+    <section class="lg-hero" aria-hidden="true">
+      <svg class="lg-net" viewBox="-150 -120 600 800" preserveAspectRatio="xMidYMid slice">
+        <path id="f1" class="fiber" d="M-20 610 C 120 600, 170 470, 300 450 S 470 330, 620 300"/>
+        <path id="f2" class="fiber" d="M-20 720 C 160 700, 240 560, 300 450 S 380 210, 520 120"/>
+        <path id="f3" class="fiber" d="M80 820 C 120 690, 210 560, 300 450 S 520 470, 640 560"/>
+        <path class="pulse" d="M-20 610 C 120 600, 170 470, 300 450 S 470 330, 620 300"/>
+        <path class="pulse p2" d="M-20 720 C 160 700, 240 560, 300 450 S 380 210, 520 120"/>
+        <path class="pulse p3" d="M80 820 C 120 690, 210 560, 300 450 S 520 470, 640 560"/>
+        <circle class="halo" cx="300" cy="450" r="9"/>
+        <circle class="node core" cx="300" cy="450" r="9"/>
+        <circle class="node" cx="520" cy="120" r="5"/>
+        <circle class="node" cx="470" cy="352" r="5"/>
+        <circle class="node" cx="190" cy="540" r="5"/>
+        <circle class="node" cx="452" cy="486" r="5"/>
+        <circle class="node" cx="160" cy="606" r="4"/>
+      </svg>
+
+      <div class="lg-top">
+        <img src="/favicon.svg" alt="">
         <div><b>Globaltech ACS</b><small>Portal de gerência</small></div>
       </div>
-      <div id="err" class="error-box" hidden></div>
-      <label for="username">Usuário</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
-      <label for="password">Senha</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button class="btn primary" type="submit">Entrar</button>
-    </form>
-  </div>
+
+      <div class="lg-copy">
+        <span class="lg-tag"><i></i>TR-069 · GenieACS</span>
+        <h1>Sua rede de clientes,<br><span>sob controle.</span></h1>
+        <p>Acompanhe roteadores e ONUs, ajuste Wi-Fi e PPPoE e resolva chamados sem sair do escritório.</p>
+        <ul class="lg-feats">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Status dos equipamentos e sinal das OLTs</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Configuração remota de Wi-Fi e firmware</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Diagnóstico e gráficos de tráfego</li>
+        </ul>
+      </div>
+
+      <div class="lg-foot">© Globaltech · acesso restrito à equipe</div>
+    </section>
+
+    <!-- Formulário -->
+    <section class="lg-side">
+      <form class="lg-form" id="form" novalidate>
+        <div class="lg-mobile-brand">
+          <img src="/favicon.svg" alt="">
+          <div><b>Globaltech ACS</b><small>Portal de gerência</small></div>
+        </div>
+
+        <h2>Entrar</h2>
+        <p class="sub">Use seu usuário e senha do portal.</p>
+
+        <div id="err" class="lg-err" role="alert" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          <span id="errMsg"></span>
+        </div>
+
+        <div class="lg-field">
+          <label for="username">Usuário</label>
+          <div class="lg-input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+            <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+          </div>
+        </div>
+
+        <div class="lg-field">
+          <label for="password">Senha</label>
+          <div class="lg-input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button type="button" class="lg-eye" id="eye" aria-label="Mostrar senha" aria-pressed="false">
+              <svg id="eyeOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg id="eyeOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M9.9 4.2A10 10 0 0 1 12 4c6.5 0 10 8 10 8a17 17 0 0 1-2.2 3.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/><path d="m2 2 20 20"/></svg>
+            </button>
+          </div>
+          <div class="lg-caps" id="caps" hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 9h-4v7H8v-7H4z"/></svg>
+            Caps Lock está ligado
+          </div>
+        </div>
+
+        <button class="lg-submit" type="submit" id="btn">
+          <span class="lg-spin" id="spin" hidden></span>
+          <span id="btnTxt">Entrar no portal</span>
+          <svg id="btnArrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+
+        <div class="lg-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Acesso restrito. Esqueceu a senha? Fale com o administrador.
+        </div>
+      </form>
+    </section>
+  </main>
+
   <script>
     const form = document.getElementById("form");
     const err = document.getElementById("err");
+    const errMsg = document.getElementById("errMsg");
+    const btn = document.getElementById("btn");
+    const pass = document.getElementById("password");
+
+    function showError(msg) {
+      errMsg.textContent = msg;
+      err.hidden = false;
+      form.classList.remove("lg-shake");
+      void form.offsetWidth; // reinicia a animação
+      form.classList.add("lg-shake");
+    }
+
+    function setLoading(on) {
+      btn.disabled = on;
+      document.getElementById("spin").hidden = !on;
+      document.getElementById("btnArrow").style.display = on ? "none" : "";
+      document.getElementById("btnTxt").textContent = on ? "Entrando…" : "Entrar no portal";
+    }
+
+    // Mostrar / esconder senha
+    const eye = document.getElementById("eye");
+    eye.addEventListener("click", () => {
+      const show = pass.type === "password";
+      pass.type = show ? "text" : "password";
+      eye.setAttribute("aria-pressed", String(show));
+      eye.setAttribute("aria-label", show ? "Esconder senha" : "Mostrar senha");
+      document.getElementById("eyeOn").hidden = show;
+      document.getElementById("eyeOff").hidden = !show;
+      pass.focus();
+    });
+
+    // Aviso de Caps Lock
+    const caps = document.getElementById("caps");
+    ["keydown", "keyup"].forEach((ev) => pass.addEventListener(ev, (e) => {
+      if (e.getModifierState) caps.hidden = !e.getModifierState("CapsLock");
+    }));
+    pass.addEventListener("blur", () => { caps.hidden = true; });
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.hidden = true;
-      const btn = form.querySelector("button");
-      btn.disabled = true;
+      const username = form.username.value.trim();
+      if (!username || !pass.value) {
+        showError("Preencha usuário e senha.");
+        (username ? pass : form.username).focus();
+        return;
+      }
+      setLoading(true);
       try {
         const res = await fetch("/api/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: form.username.value.trim(), password: form.password.value }),
+          body: JSON.stringify({ username, password: pass.value }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Falha no login");
         location.href = "/";
       } catch (ex) {
-        err.textContent = ex.message;
-        err.hidden = false;
-      } finally {
-        btn.disabled = false;
+        showError(ex.message === "Failed to fetch" ? "Sem conexão com o portal. Tente de novo." : ex.message);
+        pass.select();
+        setLoading(false);
       }
     });
   </script>
