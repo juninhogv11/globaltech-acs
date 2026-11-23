@@ -155,8 +155,10 @@ async function pageDashboard() {
       </div>
     </div>
     <div class="grid-3">
-      <div class="card"><h2>Novos nas últimas 24 h</h2><div class="big-number">${s.registered.day}</div><span class="muted">dispositivos registrados no ACS</span></div>
-      <div class="card"><h2>Novos em 7 dias</h2><div class="big-number">${s.registered.week}</div><span class="muted">dispositivos registrados no ACS</span></div>
+      <div class="card"><h2>Novos nas últimas 24 h</h2><div class="big-number">${s.registered.day}</div><span class="muted">dispositivos registrados no ACS</span>
+        ${s.registered.day ? `<div><a href="#/devices?f=novos24">ver lista ›</a></div>` : ""}</div>
+      <div class="card"><h2>Novos em 7 dias</h2><div class="big-number">${s.registered.week}</div><span class="muted">dispositivos registrados no ACS</span>
+        ${s.registered.week ? `<div><a href="#/devices?f=novos7">ver lista ›</a></div>` : ""}</div>
       <div class="card"><h2>Provisionamento</h2><div class="big-number">${s.tags.provisioned}<span class="muted" style="font-size:16px"> / ${s.total}</span></div>
         <a href="#/devices?f=erro_sgp">${s.tags.erroSgp} com ERRO_SGP</a></div>
     </div>
@@ -235,11 +237,18 @@ const FILTERS = {
   erro_sgp: ["Com ERRO_SGP", (d) => d.tags.includes("ERRO_SGP")],
   noprov: ["Não provisionados", (d) => !d.tags.includes("Provisioned")],
   signal: ["Sinal crítico/atenção", (d) => d.signal === "bad" || d.signal === "warn"],
+  novos24: ["Novos nas últimas 24 h", (d) => registradoHa(d, 86400000)],
+  novos7: ["Novos em 7 dias", (d) => registradoHa(d, 7 * 86400000)],
 };
+// Registrado no ACS há menos de `ms` (mesmo critério dos números do Dashboard)
+function registradoHa(d, ms) {
+  return !!d.registered && Date.now() - new Date(d.registered).getTime() < ms;
+}
 
 async function pageDevices(params) {
   const list = await api("/devices");
   const state = { q: params.get("q") || "", f: FILTERS[params.get("f")] ? params.get("f") : "all", page: 0, size: 25, sort: "lastInform", dir: -1 };
+  if (state.f.startsWith("novos")) state.sort = "registered"; // mais novos primeiro
 
   view.innerHTML = `
     <div class="page-head"><h1>Dispositivos</h1><span class="muted">${list.length} no total</span></div>
@@ -282,7 +291,8 @@ async function pageDevices(params) {
         <td>${d.sgpCliente ? `<b class="client-id">${esc(d.sgpCliente)}</b>` : `<span class="muted">—</span>`}</td>
         <td><b>${esc(d.ssid || "—")}</b></td><td>${esc(d.serial)}</td><td>${esc(d.model)}</td>
         <td><code>${esc(d.mac)}</code></td><td>${esc(d.wanIp || "—")}</td><td>${signalBadge(d)}</td>
-        <td title="${esc(fmtDate(d.lastInform))}">${timeAgo(d.lastInform)}</td><td>${statusBadge(d)}</td>
+        <td title="${esc(fmtDate(d.lastInform))}">${timeAgo(d.lastInform)}${state.f.startsWith("novos") && d.registered
+          ? `<div class="muted" style="font-size:12px" title="${esc(fmtDate(d.registered))}">registrado ${timeAgo(d.registered)}</div>` : ""}</td><td>${statusBadge(d)}</td>
         <td style="text-align:center">${provIcon(d)}</td>
         ${(() => { const t = d.tags.filter((x) => !isHiddenTag(x)); return `<td class="tags-cell" title="${esc(t.join(", "))}">${tagList(t.slice(0, 2))}${t.length > 2 ? `<span class="tag more">+${t.length - 2}</span>` : ""}</td>`; })()}
       </tr>`).join("") : `<tr><td colspan="11" class="empty">Nenhum dispositivo encontrado.</td></tr>`;
@@ -649,6 +659,7 @@ async function pageDevice(id) {
         <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `${sgpClienteLink(d.sgpCliente)}${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
         <dt>Serial</dt><dd>${esc(d.serial)}</dd>
         <dt>Fabricante / modelo</dt><dd>${esc(d.manufacturer)} ${esc(d.model)}</dd>
+        ${d.hasOptical ? `<dt>OLT / ONU</dt><dd id="olt-info"><span class="muted">carregando…</span></dd>` : ""}
         <dt>Hardware</dt><dd>${esc(d.hardware || "—")}</dd>
         <dt>Firmware</dt><dd>${esc(d.software || "—")}
           ${d.online ? `<button class="btn sm" id="fw-upgrade" style="margin-left:8px">Atualizar firmware</button>`
@@ -893,13 +904,17 @@ async function loadEventos(id) {
   const onu = r.onu;
   const CAUSA = { energia: ["Falta de energia (dying gasp)", "diag-atencao"], fibra: ["Perda de fibra (LOS)", "diag-problema"], outro: ["Outro motivo", "diag-info"] };
   const oltQuedas = onu ? (onu.historico || []).slice(0, 10) : [];
+  // OLT/ONU vai para o quadro "Informações" (a mesma leitura também alimenta este quadro)
+  const oltInfo = $("#olt-info");
+  if (oltInfo) oltInfo.innerHTML = onu
+    ? `<b>OLT ${esc(onu.oltNome)}</b> · ONU <code>${esc(onu.index)}</code>${onu.sn ? ` · ${esc(onu.sn)}` : ""}
+        <div style="margin-top:4px">${onu.online ? `<span class="badge good"><span class="dot"></span>online na OLT</span>` : `<span class="badge bad"><span class="dot"></span>${esc(onu.causa === "energia" ? "sem energia (dying gasp)" : onu.causa === "fibra" ? "sem fibra (LOS)" : onu.estadoOlt)}</span>`}
+        ${onu.rx ? ` <span class="muted">· RX ${onu.rx} dBm</span>` : ""} <span class="muted">· lido ${timeAgo(onu.visto)}</span></div>`
+    : `<span class="muted">${r.indisponivel ? "indisponível agora" : "não encontrada nas OLTs cadastradas"}</span>`;
   card.innerHTML = `
     <div class="card-head"><h2>Quedas e reinícios</h2>
       <span class="muted">${r.indisponivel ? "histórico indisponível agora" : `últimos 7 dias: ${n("religou")} religou · ${n("rede")} fibra/OLT · ${n("acs") + n("firmware")} pedidos pelo ACS`}</span></div>
-    ${onu ? `<div class="olt-linha"><b>OLT ${esc(onu.oltNome)}</b> · ONU <code>${esc(onu.index)}</code>${onu.sn ? ` · ${esc(onu.sn)}` : ""} ·
-        ${onu.online ? `<span class="badge good">online na OLT</span>` : `<span class="badge bad">${esc(onu.causa === "energia" ? "sem energia (dying gasp)" : onu.causa === "fibra" ? "sem fibra (LOS)" : onu.estadoOlt)}</span>`}
-        ${onu.rx ? ` · RX ${onu.rx} dBm` : ""} <span class="muted">· lido ${timeAgo(onu.visto)}</span></div>
-      ${oltQuedas.length ? `<details style="margin:6px 0 10px"><summary>Quedas registradas pela OLT (${onu.historico.length})</summary>
+    ${onu ? `${oltQuedas.length ? `<details style="margin:6px 0 10px"><summary>Quedas registradas pela OLT (${onu.historico.length})</summary>
         <table style="margin-top:6px"><thead><tr><th>Caiu</th><th>Voltou</th><th>Causa (OLT)</th></tr></thead><tbody>${oltQuedas.map((q) => `<tr>
           <td>${esc(fmtDate(q.caiu))}</td><td>${q.voltou ? esc(fmtDate(q.voltou)) : "—"}</td>
           <td>${q.pedidoAcs ? `<span class="ev-tag diag-ok">Reinício pedido pelo ACS${q.pedidoAcs === "firmware" ? " (firmware)" : ""}</span>` : `<span class="ev-tag ${(CAUSA[q.causa] || CAUSA.outro)[1]}">${esc((CAUSA[q.causa] || CAUSA.outro)[0])}</span>`} <span class="muted">${esc(q.motivo || "")}</span></td></tr>`).join("")}</tbody></table></details>` : ""}`
