@@ -431,6 +431,8 @@ api.delete("/api/faults/:id", async (req, res) => {
 });
 
 // ---------- OLTs (cadastro; senha e community criptografadas e nunca devolvidas) ----------
+// Totais de clientes (ONUs) de todas as OLTs ao longo do tempo (gráfico do dashboard)
+api.get("/api/olts/totais", async (req, res) => res.json(oltcoleta.totais(new URL(req.url, "http://x").searchParams.get("horas"))));
 api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS, coleta: oltcoleta.resumo() }));
 
 api.post("/api/olts", async (req, res) => {

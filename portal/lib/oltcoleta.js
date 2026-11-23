@@ -281,6 +281,36 @@ function limparSeries() {
   }
 }
 
+// ---------- Totais de todas as OLTs (gráfico "Clientes nas OLTs" do dashboard) ----------
+// data/olt-totais.json: um ponto por coleta (10 min), 7 dias: [hora, online, sem energia, sem fibra, outros, OLTs lidas]
+// Soma a última coleta boa de cada OLT (a Nokia por Telnet é lida a cada 30 min); coleta com mais de 90 min não entra.
+const TFILE = path.join(path.dirname(USERS_FILE), "olt-totais.json");
+let tdb = null;
+function loadT() {
+  if (tdb) return tdb;
+  try { tdb = JSON.parse(fs.readFileSync(TFILE, "utf8")); } catch { tdb = { pts: [] }; }
+  return tdb;
+}
+function registrarTotais(agora) {
+  loadT();
+  const t = [agora, 0, 0, 0, 0, 0];
+  for (const c of Object.values(db.coletas)) {
+    if (!c.ok || Date.now() - Date.parse(c.em) > 90 * 60000) continue;
+    t[1] += c.online; t[2] += c.energia; t[3] += c.fibra; t[4] += c.onus - c.online - c.energia - c.fibra; t[5]++;
+  }
+  if (!t[5]) return;
+  const limite = new Date(Date.now() - SERIE_DIAS * 86400000).toISOString();
+  tdb.pts = tdb.pts.filter((p) => p[0] >= limite);
+  tdb.pts.push(t);
+  fs.writeFileSync(TFILE + ".tmp", JSON.stringify(tdb), { mode: 0o600 });
+  fs.renameSync(TFILE + ".tmp", TFILE);
+}
+function totais(horas = 24) {
+  const h = Math.min(Math.max(Number(horas) || 24, 1), SERIE_DIAS * 24);
+  const desde = new Date(Date.now() - h * 3600000).toISOString();
+  return { horas: h, campos: ["em", "online", "energia", "fibra", "outros", "olts"], pts: loadT().pts.filter((p) => p[0] >= desde) };
+}
+
 // Tempo ligada em segundos: hrSystemUptime (equipamento) e, se não houver, sysUpTime (agente SNMP).
 // GET separado por OID: no SNMP v1 um OID inexistente derruba o pedido inteiro.
 async function tempoLigada(o) {
@@ -459,6 +489,7 @@ async function coletar(forcar = false) {
     save();
     limparSeries();
     saveS();
+    registrarTotais(agora);
   } finally { rodando = false; }
 }
 
@@ -547,4 +578,4 @@ function iniciar(listarAparelhos) {
   setInterval(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), INTERVALO_MIN * 60000).unref();
 }
 
-module.exports = { coletar, onuDoAparelho, acharOnu, confirmarEventos, resumo, iniciar, causaDe, serieDoAparelho };
+module.exports = { coletar, onuDoAparelho, acharOnu, confirmarEventos, resumo, iniciar, causaDe, serieDoAparelho, totais };

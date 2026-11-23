@@ -109,19 +109,6 @@ const signalBadge = (d) =>
 const tagList = (tags, removable = false) =>
   tags.map((t) => `<span class="tag ${t === "ERRO_SGP" ? "err" : ""}">${esc(t)}${removable ? `<button data-untag="${esc(t)}" title="Remover tag">×</button>` : ""}</span>`).join("");
 
-function doughnut(canvas, labels, data, colors) {
-  const c = new Chart(canvas, {
-    type: "doughnut",
-    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: "#fff" }] },
-    options: {
-      maintainAspectRatio: false,
-      cutout: "62%",
-      plugins: { legend: { position: "right", labels: { boxWidth: 12, padding: 12 } } },
-    },
-  });
-  charts.push(c);
-  return c;
-}
 
 const ICONS = {
   devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
@@ -134,7 +121,6 @@ const ICONS = {
 async function pageDashboard() {
   const s = await api("/summary");
   $("#updated").textContent = "Atualizado " + new Date(s.updatedAt).toLocaleTimeString("pt-BR");
-  const optical = s.signal.good + s.signal.warn + s.signal.bad;
   view.innerHTML = `
     <div class="page-head"><h1>Monitoramento da rede</h1></div>
     <div class="stats">
@@ -145,15 +131,10 @@ async function pageDashboard() {
     </div>
     <div id="regionais"></div>
     <div id="olts-painel"></div>
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-head"><h2>Sinal PON (RX)</h2><span class="muted">${optical} ONUs com leitura</span></div>
-        <div class="chart-box"><canvas id="c-signal"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>Modelos</h2><span class="muted">${s.manufacturers.map((m) => `${esc(m.label)} (${m.count})`).join(" · ")}</span></div>
-        <div class="chart-box"><canvas id="c-models"></canvas></div>
-      </div>
+    <div class="card" id="olt-graf-card" style="margin-bottom:20px">
+      <div class="card-head"><h2>Clientes nas OLTs (24 h)</h2><span class="muted" id="olt-graf-info"></span></div>
+      <div class="chart-box tall"><canvas id="c-olt-totais"></canvas></div>
+      <div class="olt-legenda" id="olt-graf-leg"></div>
     </div>
     <div class="grid-3">
       <div class="card"><h2>Novos nas últimas 24 h</h2><div class="big-number">${s.registered.day}</div><span class="muted">dispositivos registrados no ACS</span>
@@ -178,15 +159,60 @@ async function pageDashboard() {
       </div>
     </div>`;
 
-  doughnut($("#c-signal"),
-    ["Bom (≥ -24 dBm)", "Atenção (-24 a -27)", "Crítico (< -27 ou > -8)", "Sem leitura"],
-    [s.signal.good, s.signal.warn, s.signal.bad, s.signal.none],
-    [COLORS.good, COLORS.warn, COLORS.bad, COLORS.none]);
-  doughnut($("#c-models"), s.models.map((m) => m.label), s.models.map((m) => m.count), PALETTE);
+  loadOltTotais();
   loadRegionais();
   loadOltsPainel();
 
   pageTimer = setInterval(() => route(true), 60000);
+}
+
+// Gráfico "Clientes nas OLTs (24 h)": soma de todas as OLTs a cada coleta (online, sem energia, sem fibra, outros)
+const OLT_SERIES = [
+  { i: 1, nome: "Online", cor: "#14a05a", fill: true },
+  { i: 2, nome: "Sem energia", cor: "#2b6bff", dica: "Power Fail / dying gasp" },
+  { i: 3, nome: "Sem fibra", cor: "#e8890c", dica: "LOS" },
+  { i: 4, nome: "Outros offline", cor: "#8a93a6", dica: "N/A" },
+];
+async function loadOltTotais() {
+  let r;
+  try { r = await api("/olts/totais?horas=24"); } catch { return; }
+  const canvas = $("#c-olt-totais");
+  if (!canvas) return;
+  if (!r.pts.length) {
+    $("#olt-graf-card .chart-box").outerHTML = `<div class="empty">O gráfico começa a ser preenchido na próxima leitura das OLTs (a cada 10 min).</div>`;
+    return;
+  }
+  const ult = r.pts[r.pts.length - 1];
+  $("#olt-graf-info").textContent = `${ult[5]} OLT(s) · ${ult[1] + ult[2] + ult[3] + ult[4]} ONUs · ${timeAgo(ult[0])}`;
+  $("#olt-graf-leg").innerHTML = OLT_SERIES.map((x) => `<span title="${x.dica || ""}"><i style="background:${x.cor}"></i>${x.nome} <b>${ult[x.i]}</b></span>`).join("");
+  const hora = (iso) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.parentNode.clientHeight || 300);
+  grad.addColorStop(0, "rgba(20,160,90,.35)");
+  grad.addColorStop(1, "rgba(20,160,90,.02)");
+  charts.push(new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: r.pts.map((p) => hora(p[0])),
+      datasets: OLT_SERIES.map((x) => ({
+        label: x.nome, data: r.pts.map((p) => p[x.i]), borderColor: x.cor, backgroundColor: x.fill ? grad : x.cor,
+        fill: !!x.fill, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25,
+      })),
+    },
+    options: {
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { title: (it) => { const p = r.pts[it[0].dataIndex]; return new Date(p[0]).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + ` · ${p[5]} OLT(s)`; } } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 9, maxRotation: 0 } },
+        y: { beginAtZero: true, grid: { color: "rgba(120,130,150,.15)" }, ticks: { precision: 0 } },
+      },
+    },
+  }));
 }
 
 // Quadro "OLTs" do dashboard: estado de cada OLT pela última coleta (ONUs online/offline, tempo ligada)
