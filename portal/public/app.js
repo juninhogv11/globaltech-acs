@@ -144,6 +144,7 @@ async function pageDashboard() {
       <a class="stat red" href="#/faults"><div><small>Falhas ativas</small><b>${s.faults}</b></div>${ICONS.faults}</a>
     </div>
     <div id="regionais"></div>
+    <div id="olts-painel"></div>
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><h2>Sinal PON (RX)</h2><span class="muted">${optical} ONUs com leitura</span></div>
@@ -183,8 +184,57 @@ async function pageDashboard() {
     [COLORS.good, COLORS.warn, COLORS.bad, COLORS.none]);
   doughnut($("#c-models"), s.models.map((m) => m.label), s.models.map((m) => m.count), PALETTE);
   loadRegionais();
+  loadOltsPainel();
 
   pageTimer = setInterval(() => route(true), 60000);
+}
+
+// Quadro "OLTs" do dashboard: estado de cada OLT pela última coleta (ONUs online/offline, tempo ligada)
+const OLT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>';
+function fmtLigada(seg) {
+  const d = Math.floor(seg / 86400), h = Math.floor((seg % 86400) / 3600), m = Math.floor((seg % 3600) / 60);
+  const hm = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return d ? `${d} ${d === 1 ? "dia" : "dias"}, ${hm}` : hm;
+}
+async function loadOltsPainel() {
+  let r;
+  try { r = await api("/olts"); } catch { return; }
+  const box = $("#olts-painel");
+  if (!box || !r.olts.length) return;
+  const coleta = r.coleta || {};
+  const agora = Date.now();
+  const linhas = r.olts.map((o) => {
+    const c = (coleta.coletas || {})[o.id];
+    // Sem resposta: última coleta com erro ou parada há mais de 3 intervalos
+    const intervalo = Math.max(coleta.intervaloMin || 10, (c && c.via === "telnet" && (coleta.intervaloTipo || {})[o.tipo]) || 0);
+    const atrasada = c && agora - Date.parse(c.em) > 3 * intervalo * 60000;
+    const ok = !!(c && c.ok && !atrasada);
+    const off = ok ? c.onus - c.online : 0;
+    const pct = ok && c.onus ? off / c.onus : 0;
+    const nivel = !ok ? "bad" : pct >= 0.25 ? "bad" : pct >= 0.1 ? "warn" : "good";
+    return { o, c, ok, off, nivel, nome: o.descricao };
+  }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
+  const online = linhas.filter((x) => x.ok).length;
+  const nWarn = linhas.filter((x) => x.nivel === "warn").length;
+  const nBad = linhas.filter((x) => x.nivel === "bad").length;
+  const totOnus = linhas.reduce((t, x) => t + (x.ok ? x.c.onus : 0), 0);
+  const totOn = linhas.reduce((t, x) => t + (x.ok ? x.c.online : 0), 0);
+  const detalhe = (x) => {
+    if (!x.c) return `<span class="muted">ainda não lida</span>`;
+    if (!x.ok) return `<span class="olt-err">${x.c.ok ? `sem leitura ${timeAgo(x.c.em)}` : esc(x.c.erro || "erro na leitura")}</span>`;
+    const lig = x.c.ligadoSeg != null ? fmtLigada(x.c.ligadoSeg + Math.max(0, (agora - Date.parse(x.c.em)) / 1000)) : null;
+    return `<span class="olt-onus"><b>${x.c.online}</b>/${x.c.onus} ONUs</span>
+      ${x.off ? `<span class="olt-off ${x.nivel}" title="${x.c.energia} sem energia · ${x.c.fibra} sem fibra · ${x.off - x.c.energia - x.c.fibra} outros">${x.off} off</span>` : ""}
+      ${lig ? `<i class="olt-up" title="Tempo ligada (SNMP)">${lig}</i>` : ""}`;
+  };
+  box.innerHTML = `<div class="card olt-card" style="margin-bottom:20px">
+    <div class="card-head"><h2>OLTs <span class="olt-cnt ${online < linhas.length ? "bad" : ""}">${online}/${linhas.length} online</span>
+      ${nWarn ? `<span class="badge warn" title="OLTs com 10% ou mais das ONUs offline">${ICONS.faults}${nWarn}</span>` : ""}
+      ${nBad ? `<span class="badge bad" title="OLT sem resposta ou com 25% ou mais das ONUs offline">${ICONS.faults}${nBad}</span>` : ""}</h2>
+      <span class="muted">${totOn}/${totOnus} ONUs online · <a href="#/olts">gerenciar ›</a></span></div>
+    <div class="olt-list">${linhas.map((x) => `<a class="olt-row ${x.nivel}" href="#/olts" title="${esc(x.o.tipoNome)} · ${esc(x.o.ip)}${x.c ? ` · lida ${timeAgo(x.c.em)}` : ""}">
+      <span class="olt-ico">${OLT_ICON}</span><span class="olt-nome">${esc(x.nome)}</span><span class="olt-det">${detalhe(x)}</span></a>`).join("")}</div>
+  </div>`;
 }
 
 // Quedas das últimas 24 h: só a contagem; a lista abre quando o usuário pede (o estado aberto sobrevive à atualização da página)

@@ -442,3 +442,34 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
   border-radius: 8px; box-shadow: var(--shadow); padding: 6px 8px; font-size: 12px; pointer-events: none; z-index: 2; }
 @media (max-width: 600px) { .graf-periodo { margin-left: 0; width: 100%; } }
 #sinal-card .card-head { flex-wrap: wrap; gap: 6px 12px; justify-content: flex-start; align-items: center; }
+
+/* ---------- Dashboard: quadro das OLTs ---------- */
+.olt-cnt { font-size: 13px; font-weight: 600; color: var(--good); }
+.olt-cnt.bad { color: var(--bad); }
+.olt-card .card-head .badge { display: inline-flex; align-items: center; gap: 4px; }
+.olt-card .card-head .badge svg { width: 13px; height: 13px; }
+.olt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 0 18px; max-height: 340px; overflow-y: auto; }
+.olt-row {
+  display: flex; align-items: center; gap: 10px; padding: 11px 10px; border-bottom: 1px solid #edf0f6;
+  color: var(--text); border-left: 3px solid transparent; transition: background .12s;
+}
+.olt-row:hover { text-decoration: none; background: #f3f7ff; }
+.olt-row.warn { border-left-color: var(--warn); }
+.olt-row.bad { border-left-color: var(--bad); }
+.olt-ico svg { width: 18px; height: 18px; color: #7a849b; display: block; }
+.olt-row.bad .olt-ico svg { color: var(--bad); }
+.olt-nome { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; letter-spacing: .01em; }
+.olt-det { display: flex; align-items: center; gap: 8px; font-size: 12.5px; white-space: nowrap; }
+.olt-onus { color: var(--muted); font-variant-numeric: tabular-nums; }
+.olt-onus b { color: var(--good); }
+.olt-off { font-weight: 600; font-variant-numeric: tabular-nums; }
+.olt-off.good { color: var(--muted); }
+.olt-off.warn { color: var(--warn); }
+.olt-off.bad { color: var(--bad); }
+.olt-up { color: var(--muted); font-variant-numeric: tabular-nums; }
+.olt-err { color: var(--bad); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 520px) {
+  .olt-list { grid-template-columns: 1fr; }
+  .olt-row { flex-wrap: wrap; }
+  .olt-det { width: 100%; padding-left: 28px; }
+}

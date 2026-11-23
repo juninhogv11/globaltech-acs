@@ -280,6 +280,18 @@ function limparSeries() {
   }
 }
 
+// Tempo ligada em segundos: hrSystemUptime (equipamento) e, se não houver, sysUpTime (agente SNMP).
+// GET separado por OID: no SNMP v1 um OID inexistente derruba o pedido inteiro.
+async function tempoLigada(o) {
+  for (const oid of ["1.3.6.1.2.1.25.1.1.0", "1.3.6.1.2.1.1.3.0"]) {
+    try {
+      const [vb] = await olts.snmpGetLote(o.id, [oid]);
+      if (vb && typeof vb.value === "number" && vb.value > 0) return Math.round(vb.value / 100);
+    } catch {}
+  }
+  return null;
+}
+
 // Quem fornece a lista de aparelhos do ACS (definido em iniciar); usado para saber quais ONUs medir
 let aparelhosFn = null;
 
@@ -324,6 +336,8 @@ async function coletar(forcar = false) {
           extra.via = "telnet";
         }
         if (extra.via === "snmp") { try { await medirSnmp(o, onus, vinc); } catch (e) { extra.medidaErro = e.message; } }
+        // Tempo ligada (para o quadro do dashboard). V-SOL fica de fora: o agente SNMP dela trava.
+        if (extra.via === "snmp") { const s = await tempoLigada(o); if (s != null) extra.ligadoSeg = s; }
         extra.segundos = Math.round((Date.now() - t0) / 100) / 10;
         for (const x of onus) { const key = `${o.id}|${x.index}`; if (vinc.has(key)) registrarSerie(key, agora, x); }
         const vistos = new Set();
