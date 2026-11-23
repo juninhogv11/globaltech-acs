@@ -381,7 +381,8 @@ async function statusNokia(o) {
 async function statusVsol(o) {
   const r = await olts.lerComandos(o.id, ["configure terminal", "show time", "show fan"]);
   const out = { nivel: "ok" };
-  const up = r.saidas[1].saida.match(/running for (.+)/i);
+  // Firmwares diferentes: "The olt has been running for 7 days ..." ou "Syetem Running Time:  20 Hours 54 Minutes ..."
+  const up = r.saidas[1].saida.match(/running (?:for|time\s*:)\s*(.+)/i);
   if (up) out.ligadoSeg = durTxt(up[1]);
   const tm = r.saidas[2].saida.match(/current temperature\s*:\s*(-?[\d.]+)/i);
   if (tm) {
