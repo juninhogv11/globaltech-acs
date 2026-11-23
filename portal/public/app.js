@@ -212,27 +212,33 @@ async function loadOltsPainel() {
     const off = ok ? c.onus - c.online : 0;
     const pct = ok && c.onus ? off / c.onus : 0;
     const nivel = !ok ? "bad" : pct >= 0.25 ? "bad" : pct >= 0.1 ? "warn" : "good";
-    return { o, c, ok, off, nivel, nome: o.descricao };
+    const st = (coleta.status || {})[o.id] || {};
+    const tempNivel = ok && st.temp != null ? st.nivel || "ok" : null;
+    return { o, c, st, ok, off, nivel, tempNivel, nome: o.descricao };
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
   const online = linhas.filter((x) => x.ok).length;
-  const nWarn = linhas.filter((x) => x.nivel === "warn").length;
-  const nBad = linhas.filter((x) => x.nivel === "bad").length;
+  const nWarn = linhas.filter((x) => x.nivel === "warn" || x.tempNivel === "warn").length;
+  const nBad = linhas.filter((x) => x.nivel === "bad" || x.tempNivel === "bad").length;
   const totOnus = linhas.reduce((t, x) => t + (x.ok ? x.c.onus : 0), 0);
   const totOn = linhas.reduce((t, x) => t + (x.ok ? x.c.online : 0), 0);
   const detalhe = (x) => {
     if (!x.c) return `<span class="muted">ainda não lida</span>`;
     if (!x.ok) return `<span class="olt-err">${x.c.ok ? `sem leitura ${timeAgo(x.c.em)}` : esc(x.c.erro || "erro na leitura")}</span>`;
-    const lig = x.c.ligadoSeg != null ? fmtLigada(x.c.ligadoSeg + Math.max(0, (agora - Date.parse(x.c.em)) / 1000)) : null;
+    // Tempo ligada: a leitura mais recente (SNMP na coleta ou leitura de status), somando o tempo desde então
+    const fontes = [[x.c.ligadoSeg, x.c.em], [x.st.ligadoSeg, x.st.em]].filter(([v, em]) => v != null && em).sort((a, b) => b[1].localeCompare(a[1]));
+    const lig = fontes.length ? fmtLigada(fontes[0][0] + Math.max(0, (agora - Date.parse(fontes[0][1])) / 1000)) : null;
+    const pts = (x.st.pontos || []).map((p) => `${p.nome}: ${p.temp}°C`).join(" · ");
+    const temp = x.st.temp != null ? `<span class="olt-temp ${x.tempNivel}" title="Temperatura lida ${timeAgo(x.st.em)}${pts ? " — " + esc(pts) : ""}${x.st.erro ? " (última tentativa falhou: " + esc(x.st.erro) + ")" : ""}">${Math.round(x.st.temp)}°C</span>` : "";
     return `<span class="olt-onus"><b>${x.c.online}</b>/${x.c.onus} ONUs</span>
       ${x.off ? `<span class="olt-off ${x.nivel}" title="${x.c.energia} sem energia · ${x.c.fibra} sem fibra · ${x.off - x.c.energia - x.c.fibra} outros">${x.off} off</span>` : ""}
-      ${lig ? `<i class="olt-up" title="Tempo ligada (SNMP)">${lig}</i>` : ""}`;
+      ${lig ? `<i class="olt-up" title="Tempo ligada">${lig}</i>` : ""}${lig && temp ? '<span class="olt-sep">,</span>' : ""}${temp}`;
   };
   box.innerHTML = `<div class="card olt-card" style="margin-bottom:20px">
     <div class="card-head"><h2>OLTs <span class="olt-cnt ${online < linhas.length ? "bad" : ""}">${online}/${linhas.length} online</span>
-      ${nWarn ? `<span class="badge warn" title="OLTs com 10% ou mais das ONUs offline">${ICONS.faults}${nWarn}</span>` : ""}
-      ${nBad ? `<span class="badge bad" title="OLT sem resposta ou com 25% ou mais das ONUs offline">${ICONS.faults}${nBad}</span>` : ""}</h2>
+      ${nWarn ? `<span class="badge warn" title="OLTs com 10% ou mais das ONUs offline ou temperatura perto do limite">${ICONS.faults}${nWarn}</span>` : ""}
+      ${nBad ? `<span class="badge bad" title="OLT sem resposta, com 25% ou mais das ONUs offline ou temperatura no limite de alarme">${ICONS.faults}${nBad}</span>` : ""}</h2>
       <span class="muted">${totOn}/${totOnus} ONUs online · <a href="#/olts">gerenciar ›</a></span></div>
-    <div class="olt-list">${linhas.map((x) => `<a class="olt-row ${x.nivel}" href="#/olts" title="${esc(x.o.tipoNome)} · ${esc(x.o.ip)}${x.c ? ` · lida ${timeAgo(x.c.em)}` : ""}">
+    <div class="olt-list">${linhas.map((x) => `<a class="olt-row ${x.nivel === "bad" || x.tempNivel === "bad" ? "bad" : x.nivel === "warn" || x.tempNivel === "warn" ? "warn" : "good"}" href="#/olts" title="${esc(x.o.tipoNome)} · ${esc(x.o.ip)}${x.c ? ` · lida ${timeAgo(x.c.em)}` : ""}">
       <span class="olt-ico">${OLT_ICON}</span><span class="olt-nome">${esc(x.nome)}</span><span class="olt-det">${detalhe(x)}</span></a>`).join("")}</div>
   </div>`;
 }

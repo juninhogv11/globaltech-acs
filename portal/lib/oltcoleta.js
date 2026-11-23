@@ -19,6 +19,7 @@ let db = null;
 function load() {
   if (db) return db;
   try { db = JSON.parse(fs.readFileSync(FILE, "utf8")); } catch { db = { onus: {}, historico: {}, coletas: {} }; }
+  db.status = db.status || {};
   return db;
 }
 function save() {
@@ -292,6 +293,90 @@ async function tempoLigada(o) {
   return null;
 }
 
+// ---------- Temperatura e tempo ligada de cada OLT (data/olt-onus.json -> status) ----------
+// Conferido em 23/11/2026 (só leitura):
+//   ZTE C610 (Telnet): "show temperature detail" -> pontos da placa (Minor/Major em °C) e ENV (ambiente, High-threshold);
+//                      tempo ligada pelo SNMP ou, sem SNMP, "show card slotno N" (Uptime) da placa de controle (GMPA/GMRA)
+//   Nokia ISAM (SNMP): 637.61.1.23.10.1 .2 temperatura atual, .3 tca-low e .4 tca-high por sensor (= "show equipment temperature")
+//   V-SOL (Telnet, modo config): "show fan" ("current temperature:48.5 .C") e "show time" ("running for 7 days 8 hours ...")
+const STATUS_MIN = Number(process.env.OLT_STATUS_MIN || 30);
+const VSOL_TEMP = { warn: 60, bad: 70 }; // a V-SOL não informa limites; valores conservadores
+const NOKIA_TEMP = { atual: "1.3.6.1.4.1.637.61.1.23.10.1.2", aviso: "1.3.6.1.4.1.637.61.1.23.10.1.3", alto: "1.3.6.1.4.1.637.61.1.23.10.1.4" };
+const PIOR = { ok: 0, warn: 1, bad: 2 };
+const pior = (a, b) => (PIOR[b] > PIOR[a] ? b : a);
+function durTxt(t) {
+  const g = (re) => Number((String(t).match(re) || [])[1] || 0);
+  const s = g(/(\d+)\s*day/i) * 86400 + g(/(\d+)\s*hour/i) * 3600 + g(/(\d+)\s*min/i) * 60 + g(/(\d+)\s*sec/i);
+  return s > 0 ? s : null;
+}
+async function statusZte(o, comLigado) {
+  const r = await olts.lerComandos(o.id, comLigado ? ["show temperature detail", "show card"] : ["show temperature detail"]);
+  const t = r.saidas[0].saida;
+  const out = { nivel: "ok", pontos: [] };
+  for (const m of t.matchAll(/^(\S+)\s+\d+\s+\d+\s+(.+?)\s+\S+\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+(\d+)\s*$/gm)) {
+    const [, , nome, minor, major, atual] = m;
+    out.pontos.push({ nome: nome.trim(), temp: +atual });
+    out.nivel = pior(out.nivel, +atual >= +major ? "bad" : +atual >= +minor ? "warn" : "ok");
+  }
+  const env = t.match(/^ENV\s+\S+\s+(\d+)\s+(\d+)/m);
+  if (env) {
+    const [, alto, atual] = env.map(Number);
+    out.temp = atual;
+    out.nivel = pior(out.nivel, atual >= alto ? "bad" : atual >= alto - 5 ? "warn" : "ok");
+  } else if (out.pontos.length) out.temp = Math.max(...out.pontos.map((p) => p.temp));
+  if (comLigado) {
+    const linhas = [...r.saidas[1].saida.matchAll(/^\d+\s+(\d+)\s+(\S+)\s+.*INSERVICE/gm)];
+    const ctrl = linhas.find((m) => /^GM/i.test(m[2])) || linhas[0];
+    if (ctrl) {
+      const r2 = await olts.lerComandos(o.id, [`show card slotno ${ctrl[1]}`]);
+      const up = r2.saidas[0].saida.match(/^Uptime\s*:\s*(.+)$/m);
+      if (up) out.ligadoSeg = durTxt(up[1]);
+    }
+  }
+  return out;
+}
+async function statusNokia(o) {
+  const t = await olts.snmpColunas(o.id, Object.values(NOKIA_TEMP), 500);
+  const val = (col) => { const m = {}; for (const vb of t[col]) m[vb.oid.slice(col.length)] = vb.value; return m; };
+  const atual = val(NOKIA_TEMP.atual), aviso = val(NOKIA_TEMP.aviso), alto = val(NOKIA_TEMP.alto);
+  const out = { nivel: "ok", pontos: [] };
+  for (const [k, v] of Object.entries(atual)) {
+    if (typeof v !== "number") continue;
+    out.pontos.push({ nome: `sensor ${k.replace(/^\./, "")}`, temp: v });
+    out.nivel = pior(out.nivel, alto[k] && v >= alto[k] ? "bad" : aviso[k] && v >= aviso[k] ? "warn" : "ok");
+  }
+  if (out.pontos.length) out.temp = Math.max(...out.pontos.map((p) => p.temp));
+  return out;
+}
+async function statusVsol(o) {
+  const r = await olts.lerComandos(o.id, ["configure terminal", "show time", "show fan"]);
+  const out = { nivel: "ok" };
+  const up = r.saidas[1].saida.match(/running for (.+)/i);
+  if (up) out.ligadoSeg = durTxt(up[1]);
+  const tm = r.saidas[2].saida.match(/current temperature\s*:\s*(-?[\d.]+)/i);
+  if (tm) {
+    out.temp = Number(tm[1]);
+    out.nivel = out.temp >= VSOL_TEMP.bad ? "bad" : out.temp >= VSOL_TEMP.warn ? "warn" : "ok";
+  }
+  return out;
+}
+async function lerStatus(o, c) {
+  const agora = new Date().toISOString();
+  try {
+    let s;
+    if (o.tipo === "zte") s = await statusZte(o, c.ligadoSeg == null);
+    else if (o.tipo === "nokia" && o.temCommunity) s = await statusNokia(o);
+    else if (o.tipo === "vsol") s = await statusVsol(o);
+    else return;
+    // Tempo ligada lido pelo SNMP na coleta vale quando a leitura própria não trouxe
+    if (s.ligadoSeg == null && c.ligadoSeg != null) s.ligadoSeg = c.ligadoSeg;
+    db.status[o.id] = { em: agora, ...s };
+  } catch (e) {
+    // Mantém a última leitura boa, só marca o erro (tenta de novo na próxima coleta)
+    db.status[o.id] = { ...(db.status[o.id] || {}), erro: e.message, erroEm: agora };
+  }
+}
+
 // Quem fornece a lista de aparelhos do ACS (definido em iniciar); usado para saber quais ONUs medir
 let aparelhosFn = null;
 
@@ -362,6 +447,9 @@ async function coletar(forcar = false) {
           energia: onus.filter((x) => x.causa === "energia").length, fibra: onus.filter((x) => x.causa === "fibra").length, ...extra });
       } catch (e) { c.erro = e.message; }
       db.coletas[o.id] = c;
+      // Temperatura e tempo ligada: a cada STATUS_MIN (são poucas leituras, mas abrem uma sessão Telnet a mais)
+      const st = db.status[o.id];
+      if (c.ok && (forcar || !st || !st.em || Date.now() - Date.parse(st.em) > (STATUS_MIN - 1) * 60000)) await lerStatus(o, c);
     }
     const limite = Date.now() - DIAS * 86400000;
     for (const k of Object.keys(db.historico)) {
@@ -435,7 +523,7 @@ function confirmarEventos(eventos, onu) {
 
 function resumo() {
   load();
-  return { coletas: db.coletas, intervaloMin: INTERVALO_MIN, intervaloTipo: INTERVALO_TIPO, onus: Object.keys(db.onus).length };
+  return { coletas: db.coletas, status: db.status, intervaloMin: INTERVALO_MIN, intervaloTipo: INTERVALO_TIPO, onus: Object.keys(db.onus).length };
 }
 
 // Série de sinal/tráfego da ONU ligada ao aparelho (para os gráficos da página do dispositivo)

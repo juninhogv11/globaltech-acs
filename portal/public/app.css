@@ -473,3 +473,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
   .olt-row { flex-wrap: wrap; }
   .olt-det { width: 100%; padding-left: 28px; }
 }
+.olt-temp { font-style: italic; font-variant-numeric: tabular-nums; color: var(--muted); }
+.olt-temp.warn { color: var(--warn); font-weight: 600; }
+.olt-temp.bad { color: var(--bad); font-weight: 600; }
+.olt-sep { color: var(--muted); margin-left: -8px; }
