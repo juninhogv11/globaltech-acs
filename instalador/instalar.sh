@@ -112,11 +112,51 @@ mkdir -p "$RESP_DIR"; chmod 700 "$RESP_DIR"
 IP_LOCAL=$(hostname -I 2>/dev/null | awk '{print $1}')
 RAM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 
+# ============================================================================= BOAS-VINDAS E MODO
+whiptail --title "$TITULO" --msgbox "Bem-vindo ao instalador do Globaltech ACS.
+
+Servidor: $(hostname)  —  ${PRETTY_NAME:-Linux}
+IP: ${IP_LOCAL:-?}   Memória: ${RAM_GB} GB
+
+Primeiro você escolhe o tipo de instalação, depois o instalador confere
+o hardware e faz algumas perguntas. Nada é instalado antes de você
+confirmar o resumo no final.
+
+Use as SETAS para escolher, ESPAÇO para marcar e TAB para os botões." 18 76
+
+# Modo salvo da última vez (ou deduzido das respostas antigas)
+if [ -z "${MODO:-}" ]; then
+  if [ "${I_ACS:-1}" = 1 ] && [ "${I_PORTAL:-1}" = 1 ]; then MODO=JUNTO
+  elif [ "${I_ACS:-1}" = 1 ]; then MODO=ACS; else MODO=PORTAL; fi
+fi
+sel() { [ "$MODO" = "$1" ] && echo ON || echo OFF; }
+MODO=$(whiptail --title "$TITULO" --radiolist "Tipo de instalação neste servidor:" 17 78 3 \
+  JUNTO  "Tudo no mesmo servidor: GenieACS + Portal"              "$(sel JUNTO)" \
+  ACS    "Só o servidor ACS (o portal fica em outro servidor)"   "$(sel ACS)" \
+  PORTAL "Só o Portal (o GenieACS já está em outro servidor)"    "$(sel PORTAL)" \
+  3>&1 1>&2 2>&3) || cancelar
+case "$MODO" in
+  JUNTO)  I_ACS=1; I_PORTAL=1 ;;
+  ACS)    I_ACS=1; I_PORTAL=0 ;;
+  PORTAL) I_ACS=0; I_PORTAL=1 ;;
+esac
+
 # ============================================================================= VERIFICAÇÃO DO HARDWARE
 # Requisitos: mínimo (abaixo disso não instala) e recomendado (abaixo disso só avisa)
-MIN_CPU=2;  REC_CPU=4
-MIN_RAM=3500; REC_RAM=7500        # MB (8 GB aparecem como ~7,7 GB)
-MIN_DISCO=15; REC_DISCO=40        # GB livres em /var/lib (banco, imagens Docker, backups)
+if [ $I_ACS = 1 ]; then
+  MIN_CPU=2;  REC_CPU=4
+  MIN_RAM=3500; REC_RAM=7500      # MB (8 GB aparecem como ~7,7 GB)
+  MIN_DISCO=15; REC_DISCO=40      # GB livres em /var/lib (banco, imagens Docker, backups)
+  SITES="https://deb.debian.org https://registry.npmjs.org https://registry-1.docker.io/v2/"
+  PORTAS_TESTE="7547 7557 7567 3000 27017 7570"
+else                              # só o portal: bem mais leve (Node.js + nginx)
+  MIN_CPU=1;  REC_CPU=2
+  MIN_RAM=900;  REC_RAM=1800
+  MIN_DISCO=3;  REC_DISCO=10
+  SITES="https://deb.debian.org https://registry.npmjs.org"
+  PORTAS_TESTE=""
+fi
+[ $I_PORTAL = 1 ] && PORTAS_TESTE="$PORTAS_TESTE 3100"
 
 verificar_hardware() {
   local erros=0 avisos=0 rel="" ram_mb cpu disco arch virt cont vendor modelo cpu_nome
@@ -133,7 +173,11 @@ verificar_hardware() {
   rel+="MÁQUINA\n"
   if [ -n "$cont" ] && [ "$cont" != none ]; then
     TIPO_MAQ="Contêiner ($cont)"
-    av "Rodando em CONTÊINER $cont (ex.: LXC do Proxmox). O MongoDB usa Docker, que dentro\n         de LXC exige 'nesting' e costuma dar problema. Prefira uma VM."
+    if [ $I_ACS = 1 ]; then
+      av "Rodando em CONTÊINER $cont (ex.: LXC do Proxmox). O MongoDB usa Docker, que dentro\n         de LXC exige 'nesting' e costuma dar problema. Prefira uma VM."
+    else
+      ok "Contêiner $cont (serve para o portal)"
+    fi
   elif [ -n "$virt" ] && [ "$virt" != none ]; then
     case "$virt" in
       kvm|qemu) TIPO_MAQ="Máquina virtual KVM/QEMU (Proxmox?)"; GUEST_PKG=qemu-guest-agent ;;
@@ -155,16 +199,19 @@ verificar_hardware() {
   arch=$(dpkg --print-architecture)
   cpu=$(nproc)
   cpu_nome=$(awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo | sed 's/  */ /g')
-  case "$arch" in
-    amd64) ok "Arquitetura $arch" ;;
-    arm64) av "Arquitetura $arch: o MongoDB 4.4 só roda em ARM v8.2+ (ex.: Raspberry Pi 4 NÃO serve)." ;;
-    *)     erro "Arquitetura $arch não suportada (precisa amd64/x86_64)." ;;
+  case "$arch:$I_ACS" in
+    amd64:*) ok "Arquitetura $arch" ;;
+    arm64:1) av "Arquitetura $arch: o MongoDB 4.4 só roda em ARM v8.2+ (ex.: Raspberry Pi 4 NÃO serve)." ;;
+    arm64:0) ok "Arquitetura $arch" ;;
+    *)       erro "Arquitetura $arch não suportada (precisa amd64/x86_64)." ;;
   esac
   [ -n "$cpu_nome" ] && rel+="          ${cpu_nome}\n"
   if   [ "$cpu" -lt $MIN_CPU ]; then erro "$cpu núcleo(s): mínimo $MIN_CPU."
   elif [ "$cpu" -lt $REC_CPU ]; then av "$cpu núcleos: funciona, recomendado $REC_CPU ou mais."
   else ok "$cpu núcleos"; fi
-  if grep -qm1 -w avx /proc/cpuinfo; then
+  if [ $I_ACS = 0 ]; then
+    :   # o portal não usa MongoDB: AVX não importa
+  elif grep -qm1 -w avx /proc/cpuinfo; then
     ok "AVX presente"
   else
     av "Sem AVX: o MongoDB fica no 4.4 (MongoDB 5+ não roda).\n         Em VM no Proxmox, use CPU tipo 'host' para liberar o AVX."
@@ -174,8 +221,10 @@ verificar_hardware() {
   rel+="\nMEMÓRIA E DISCO\n"
   ram_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
   local ram_txt; ram_txt=$(awk -v m="$ram_mb" 'BEGIN{printf "%.1f GB", m/1024}')
-  if   [ "$ram_mb" -lt $MIN_RAM ]; then erro "RAM $ram_txt: mínimo 4 GB."
-  elif [ "$ram_mb" -lt $REC_RAM ]; then av "RAM $ram_txt: funciona, recomendado 8 GB."
+  local min_txt rec_txt
+  min_txt=$(( (MIN_RAM + 500) / 1000 )); rec_txt=$(( (REC_RAM + 500) / 1000 ))
+  if   [ "$ram_mb" -lt $MIN_RAM ]; then erro "RAM $ram_txt: mínimo $min_txt GB."
+  elif [ "$ram_mb" -lt $REC_RAM ]; then av "RAM $ram_txt: funciona, recomendado $rec_txt GB."
   else ok "RAM $ram_txt"; fi
   if [ "$(awk '/SwapTotal/ {print $2}' /proc/meminfo)" = 0 ]; then
     av "Sem memória swap: se a RAM acabar, serviços podem ser encerrados."
@@ -203,15 +252,16 @@ verificar_hardware() {
   # --- Internet (pacotes, npm e Docker Hub)
   rel+="\nINTERNET\n"
   local site falhou=""
-  for site in https://deb.debian.org https://registry.npmjs.org https://registry-1.docker.io/v2/; do
+  for site in $SITES; do
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$site" || true)" = 000 ] && falhou+=" ${site#https://}"
   done
-  if [ -n "$falhou" ]; then erro "Sem acesso a:$falhou"; else ok "Acesso aos repositórios (Debian, npm, Docker Hub)"; fi
+  if [ -n "$falhou" ]; then erro "Sem acesso a:$falhou"
+  else ok "Acesso aos repositórios ($(echo $SITES | sed 's#https://##g; s#/v2/##; s/ /, /g'))"; fi
 
   # --- Portas já usadas por outro programa (só na 1ª instalação)
   if [ ! -f "$RESP" ] && command -v ss >/dev/null; then
     local p ocupadas=""
-    for p in 7547 7557 7567 3000 3100 27017 7570; do
+    for p in $PORTAS_TESTE; do
       ss -ltnH "sport = :$p" 2>/dev/null | grep -q . && ocupadas+=" $p"
     done
     if [ -n "$ocupadas" ]; then av "Portas já em uso:$ocupadas (outro ACS/programa instalado?)"; else ok "Portas do GenieACS e do portal livres"; fi
@@ -240,31 +290,20 @@ if [ -n "$GUEST_PKG" ]; then
 fi
 
 # ============================================================================= ASSISTENTE
-whiptail --title "$TITULO" --msgbox "Bem-vindo ao instalador do Globaltech ACS.
-
-Servidor: $(hostname)  —  ${PRETTY_NAME:-Linux}
-IP: ${IP_LOCAL:-?}   Memória: ${RAM_GB} GB
-
-O assistente vai fazer algumas perguntas e mostrar um resumo.
-Nada é instalado antes de você confirmar no final.
-
-Use TAB para trocar de botão e ESPAÇO para marcar opções." 17 76
-
-# --- 1. O que instalar
-on() { [ "${!1:-$2}" = 1 ] && echo ON || echo OFF; }
-ESCOLHA=$(whiptail --title "$TITULO" --checklist "O que instalar neste servidor?" 18 78 6 \
-  ACS      "GenieACS + MongoDB + provisions/presets/extensões"  "$(on I_ACS 1)" \
-  PORTAL   "Portal Globaltech (web)"                            "$(on I_PORTAL 1)" \
-  BACKUP   "Backup diário criptografado (FTP/SFTP) [precisa ACS]" "$(on I_BACKUP 0)" \
-  FIREWALL "Proteger API NBI 7557 (liberar só IPs informados)"   "$(on I_FIREWALL 1)" \
-  SPEED    "Arquivo 100MB.bin do teste de velocidade (nginx :80)" "$(on I_SPEED 1)" \
-  3>&1 1>&2 2>&3) || cancelar
+# --- 1. Opções extras do servidor ACS
+on() { [ "${!1:-$2}" = 1 ] && echo ON || echo OFF; }   # marcação salva da última vez
+if [ $I_ACS = 1 ]; then
+  ESCOLHA=$(whiptail --title "$TITULO" --checklist "Opções do servidor ACS (ESPAÇO marca/desmarca):" 15 78 3 \
+    BACKUP   "Backup diário criptografado (FTP/FTPS/SFTP)"            "$(on I_BACKUP 0)" \
+    FIREWALL "Proteger API NBI 7557 (liberar só IPs informados)"     "$(on I_FIREWALL 1)" \
+    SPEED    "Arquivo 100MB.bin do teste de velocidade (nginx :80)"  "$(on I_SPEED 1)" \
+    3>&1 1>&2 2>&3) || cancelar
+else
+  ESCOLHA=""
+fi
 tem() { [[ " $ESCOLHA " == *"\"$1\""* ]]; }
-I_ACS=0; I_PORTAL=0; I_BACKUP=0; I_FIREWALL=0; I_SPEED=0
-tem ACS && I_ACS=1; tem PORTAL && I_PORTAL=1; tem BACKUP && I_BACKUP=1
-tem FIREWALL && I_FIREWALL=1; tem SPEED && I_SPEED=1
-if [ $I_ACS = 0 ]; then I_BACKUP=0; I_FIREWALL=0; I_SPEED=0; fi
-[ $I_ACS = 0 ] && [ $I_PORTAL = 0 ] && { aviso "Nada foi escolhido."; exit 1; }
+I_BACKUP=0; I_FIREWALL=0; I_SPEED=0
+tem BACKUP && I_BACKUP=1; tem FIREWALL && I_FIREWALL=1; tem SPEED && I_SPEED=1
 
 # --- 2. GenieACS
 if [ $I_ACS = 1 ]; then
@@ -283,6 +322,17 @@ if [ $I_ACS = 1 ]; then
   else
     SGP_HOST=${SGP_HOST:-suaempresa.sgp.net.br}; SGP_APP=""; SGP_TOKEN=""
   fi
+
+  if [ $I_PORTAL = 0 ]; then
+    # Portal em outro servidor: o ACS busca nele a cópia do Wi-Fi (restauração após reset) e o backup inclui os dados dele
+    while true; do
+      PORTAL_EXT_URL=$(perguntar "Endereço do PORTAL (no outro servidor), como os roteadores/ACS o acessam.\nEx.: http://192.168.10.3:8080\n\nDeixe vazio se o portal ainda não existe (dá para rodar o instalador de novo depois)." "${PORTAL_EXT_URL:-}" opcional)
+      PORTAL_EXT_URL=${PORTAL_EXT_URL%/}
+      [ -z "$PORTAL_EXT_URL" ] && break
+      [[ "$PORTAL_EXT_URL" =~ ^https?://([^/:]+)(:[0-9]+)?$ ]] && { PORTAL_EXT_HOST=${BASH_REMATCH[1]}; break; }
+      aviso "Use o formato http://IP:porta (ex.: http://192.168.10.3:8080)." 8
+    done
+  fi
 fi
 
 # --- 3. Portal
@@ -293,9 +343,20 @@ if [ $I_PORTAL = 1 ]; then
     NBI_URL_PORTAL="http://127.0.0.1:7557"
     ACS_IP="$PORTAL_IP"
   else
-    ACS_IP=$(pedir_ip "IP do servidor GenieACS (a API NBI 7557 precisa estar liberada para este servidor):" "${ACS_IP:-}")
-    NBI_URL_PORTAL="http://$ACS_IP:7557"
+    while true; do
+      ACS_IP=$(pedir_ip "IP do servidor GenieACS (no outro servidor):" "${ACS_IP:-}")
+      NBI_URL_PORTAL="http://$ACS_IP:7557"
+      # Testa a API NBI daqui (o firewall do ACS precisa liberar este servidor)
+      if curl -fs --max-time 6 "$NBI_URL_PORTAL/presets/?projection=_id" >/dev/null; then
+        aviso "Conexão com a API NBI em $NBI_URL_PORTAL: OK." 8; break
+      fi
+      sim_nao "NÃO consegui acessar a API NBI em $NBI_URL_PORTAL.\n\nConfira:\n - o IP do servidor GenieACS;\n - se o genieacs-nbi está rodando lá;\n - se o firewall do ACS libera a porta 7557 para este servidor ($PORTAL_IP).\n\nContinuar assim mesmo? (Não = digitar o IP de novo)" 16 nao && break
+    done
     ACS_HOST=$(perguntar "Nome ou IP do ACS usado pelos roteadores (para o link do teste de velocidade):" "${ACS_HOST:-$ACS_IP}")
+    BACKUP_TOKEN_EXT=""
+    if sim_nao "O servidor ACS tem o BACKUP automático instalado?\n\n(se sim, o portal mostra os backups e inclui os dados dele;\no token fica no ACS em /etc/genieacs-backup/backup.env, linha TOKEN=)" 12 nao; then
+      BACKUP_TOKEN_EXT=$(senha "TOKEN do backup (copie do servidor ACS: grep ^TOKEN= /etc/genieacs-backup/backup.env):")
+    fi
   fi
   SGP_URL=$(perguntar "Endereço do SGP para abrir a ficha do cliente (opcional):" "${SGP_URL:-https://${SGP_HOST:-suaempresa.sgp.net.br}}" opcional)
   SPEED_DL=$(perguntar "Arquivo baixado pelos roteadores no teste de velocidade:" "${SPEED_DL:-http://$ACS_HOST/100MB.bin}")
@@ -330,7 +391,9 @@ fi
 # --- 5. Firewall
 if [ $I_FIREWALL = 1 ]; then
   while true; do
-    FW_IPS=$(perguntar "IPs que podem acessar a API NBI (7557) e a API de backup (7570),\nseparados por vírgula (portal, SGP). Este próprio servidor já é liberado:" "${FW_IPS:-}" opcional)
+    def_fw="${FW_IPS:-}"
+    if [ -z "$def_fw" ] && [ -n "${PORTAL_EXT_HOST:-}" ] && ip_valido "$PORTAL_EXT_HOST"; then def_fw="$PORTAL_EXT_HOST"; fi
+    FW_IPS=$(perguntar "IPs que podem acessar a API NBI (7557) e a API de backup (7570),\nseparados por vírgula (portal, SGP). Este próprio servidor já é liberado:" "$def_fw" opcional)
     FW_IPS=$(echo "$FW_IPS" | tr -d ' ')
     ruim=""; for ip in ${FW_IPS//,/ }; do ip_valido "$ip" || ruim="$ip"; done
     [ -n "$ruim" ] && { aviso "IP inválido na lista: $ruim" 8; continue; }
@@ -349,7 +412,12 @@ if [ $I_ACS = 1 ]; then
 fi
 
 # --- Resumo
-RESUMO="Confira antes de instalar:\n\nMÁQUINA: $TIPO_MAQ$([ $I_GUEST = 1 ] && echo " — instalar $GUEST_PKG")\n\n"
+case "$MODO" in
+  JUNTO)  MODO_TXT="Tudo no mesmo servidor (GenieACS + Portal)" ;;
+  ACS)    MODO_TXT="Só o servidor ACS (portal em outro servidor)" ;;
+  PORTAL) MODO_TXT="Só o Portal (GenieACS em $ACS_IP)" ;;
+esac
+RESUMO="Confira antes de instalar:\n\nTIPO: $MODO_TXT\nMÁQUINA: $TIPO_MAQ$([ $I_GUEST = 1 ] && echo " — instalar $GUEST_PKG" || true)\n\n"
 if [ $I_ACS = 1 ]; then
   RESUMO+="GENIEACS $GENIEACS_VERSION + $MONGO_IMAGE (Docker, cache ${MONGO_CACHE} GB)\n"
   RESUMO+="  ACS dos roteadores: http://$ACS_HOST:$ACS_PORTA/\n"
@@ -357,18 +425,22 @@ if [ $I_ACS = 1 ]; then
   if [ -n "$SGP_APP" ]; then RESUMO+="  SGP: $SGP_HOST (app $SGP_APP)\n"; else RESUMO+="  SGP: não integrado\n"; fi
   RESUMO+="  Reinício semanal: $([ $T_RESTART = 1 ] && echo sim || echo não)   Limpeza offline: $([ $T_LIMPEZA = 1 ] && echo sim || echo não)\n"
   RESUMO+="  Teste de velocidade (100MB.bin na porta 80): $([ $I_SPEED = 1 ] && echo sim || echo não)\n"
-  RESUMO+="  Firewall NBI: $([ $I_FIREWALL = 1 ] && echo "liberado para 127.0.0.1,$IP_LOCAL${FW_IPS:+,$FW_IPS}" || echo não)\n\n"
+  RESUMO+="  Firewall NBI: $([ $I_FIREWALL = 1 ] && echo "liberado para 127.0.0.1,$IP_LOCAL${FW_IPS:+,$FW_IPS}" || echo não)\n"
+  [ $I_PORTAL = 0 ] && RESUMO+="  Portal (outro servidor): ${PORTAL_EXT_URL:-não informado}\n"
+  RESUMO+="\n"
 fi
 if [ $I_PORTAL = 1 ]; then
   RESUMO+="PORTAL em http://$PORTAL_IP:$PORTAL_PORTA  (usuário $ADMIN_USER)\n"
-  RESUMO+="  NBI: $NBI_URL_PORTAL\n  Download do teste: $SPEED_DL\n  HTTPS: $([ $COOKIE_SECURE = 1 ] && echo sim || echo não)\n\n"
+  RESUMO+="  NBI: $NBI_URL_PORTAL\n  Download do teste: $SPEED_DL\n  HTTPS: $([ $COOKIE_SECURE = 1 ] && echo sim || echo não)\n"
+  [ $I_ACS = 0 ] && RESUMO+="  Backup do ACS no portal: $([ -n "${BACKUP_TOKEN_EXT:-}" ] && echo sim || echo não)\n"
+  RESUMO+="\n"
 fi
 [ $I_BACKUP = 1 ] && RESUMO+="BACKUP diário 02:00 para $BK_URL (usuário $BK_USER)\n"
 sim_nao "$RESUMO\nInstalar agora?" 26 || { clear; echo "Instalação cancelada. Nada foi alterado."; exit 1; }
 
 # Salva as respostas (sem senhas) para a próxima vez
 ( umask 077
-  for k in I_ACS I_PORTAL I_BACKUP I_FIREWALL I_SPEED ACS_HOST ACS_PORTA CR_USER NTP_SERVER MONGO_CACHE SGP_HOST SGP_APP \
+  for k in MODO PORTAL_EXT_URL I_ACS I_PORTAL I_BACKUP I_FIREWALL I_SPEED ACS_HOST ACS_PORTA CR_USER NTP_SERVER MONGO_CACHE SGP_HOST SGP_APP \
            PORTAL_PORTA PORTAL_IP ACS_IP SGP_URL SPEED_DL ADMIN_USER BK_URL BK_USER FW_IPS; do
     printf '%s=%q\n' "$k" "${!k:-}"
   done > "$RESP" )
@@ -464,7 +536,11 @@ EOF
   set_env $SGPENV SGP_HOST "$SGP_HOST"
   set_env $SGPENV SGP_APP "$SGP_APP"
   [ -n "${SGP_TOKEN:-}" ] && set_env $SGPENV SGP_TOKEN "$SGP_TOKEN"
-  if [ $I_PORTAL = 1 ]; then set_env $SGPENV WIFI_PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"; fi
+  if [ $I_PORTAL = 1 ]; then
+    set_env $SGPENV WIFI_PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"
+  elif [ -n "${PORTAL_EXT_URL:-}" ]; then
+    set_env $SGPENV WIFI_PORTAL_URL "$PORTAL_EXT_URL"
+  fi
 
   cp "$SRC/acs/servidor/limpeza-offline.js" /opt/genieacs/limpeza-offline.js
   sed -i 's/\r$//' /opt/genieacs/limpeza-offline.js
@@ -588,6 +664,10 @@ if [ $I_PORTAL = 1 ]; then
     set_env "$PENV" WIFI_BACKUP_ALLOW "127.0.0.1,$PORTAL_IP"
   else
     set_env "$PENV" WIFI_BACKUP_ALLOW "$ACS_IP"
+    if [ -n "${BACKUP_TOKEN_EXT:-}" ]; then
+      set_env "$PENV" BACKUP_AGENT_URL "http://$ACS_IP:7570"
+      set_env "$PENV" BACKUP_TOKEN "$BACKUP_TOKEN_EXT"
+    fi
   fi
   if [ -n "${ADMIN_PASS:-}" ]; then
     ( cd "$PORTAL_APP" && PW="$ADMIN_PASS" runuser -u portal -- node -e '
@@ -613,6 +693,7 @@ if [ $I_BACKUP = 1 ]; then
   set_env $BENV FTP_TLS "$BK_TLS"
   BK_TOKEN=$(grep -m1 '^TOKEN=' $BENV | cut -d= -f2- || true)
   [ -z "$BK_TOKEN" ] && BK_TOKEN=$(gerar_segredo 40) && set_env $BENV TOKEN "$BK_TOKEN"
+  [ $I_PORTAL = 0 ] && [ -n "${PORTAL_EXT_URL:-}" ] && set_env $BENV PORTAL_URL "$PORTAL_EXT_URL"
   if [ $I_PORTAL = 1 ]; then
     set_env $BENV PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"
     set_env "$PORTAL_APP/.env" BACKUP_AGENT_URL "http://127.0.0.1:7570"
@@ -644,6 +725,18 @@ FIM="Instalação concluída!\n\nServiços:\n$OKS\n"
 [ $I_ACS = 1 ] && FIM+="GenieACS (interface): http://$IP_LOCAL:3000  (cria o admin no 1º acesso)\nRoteadores devem apontar para: http://$ACS_HOST:$ACS_PORTA/\n\n"
 [ $I_PORTAL = 1 ] && FIM+="Portal: http://$PORTAL_IP:$PORTAL_PORTA   usuário: $ADMIN_USER\n\n"
 [ $I_BACKUP = 1 ] && FIM+="IMPORTANTE: guarde FORA do servidor a senha de criptografia do backup:\n  cat /etc/genieacs-backup/senha\n\n"
+if [ "$MODO" = ACS ]; then
+  FIM+="NO SERVIDOR DO PORTAL (rode este instalador lá, opção \"Só o Portal\"):\n"
+  FIM+="  IP do GenieACS: $IP_LOCAL\n"
+  [ $I_BACKUP = 1 ] && FIM+="  Token do backup: grep ^TOKEN= /etc/genieacs-backup/backup.env (neste servidor)\n"
+  [ -z "${PORTAL_EXT_URL:-}" ] && FIM+="  Depois rode este instalador de novo aqui e informe o endereço do portal.\n"
+  FIM+="\n"
+elif [ "$MODO" = PORTAL ]; then
+  FIM+="NO SERVIDOR DO GENIEACS ($ACS_IP), confira:\n"
+  FIM+="  - porta 7557 (e 7570 do backup) liberada para este servidor ($PORTAL_IP);\n"
+  FIM+="  - /opt/genieacs/sgp.env com WIFI_PORTAL_URL=http://$PORTAL_IP:$PORTAL_PORTA\n"
+  FIM+="    (o instalador do ACS faz isso se você informar o endereço do portal).\n\n"
+fi
 FIM+="Libere no firewall externo as portas usadas (${ACS_PORTA:-}${ACS_PORTA:+ CWMP, }7567 firmware${PORTAL_PORTA:+, $PORTAL_PORTA portal}).\nLog da instalação: $LOG"
 whiptail --title "$TITULO" --msgbox "$FIM" 26 78 </dev/tty >/dev/tty || true
 echo; echo -e "$FIM"

@@ -27,20 +27,42 @@ cd globaltech-acs
 bash instalador/instalar.sh
 ```
 
-### Verificação do hardware (antes de qualquer pergunta)
+### Tipo de instalação
+
+A primeira tela pergunta onde fica cada parte:
+
+| Opção | Instala neste servidor | Use quando |
+|---|---|---|
+| **Tudo no mesmo servidor** | GenieACS + Portal | um servidor só (o mais simples) |
+| **Só o servidor ACS** | GenieACS (+ backup, firewall, teste de velocidade) | o portal vai ficar em outro servidor |
+| **Só o Portal** | Portal (Node.js + nginx) | o GenieACS já está em outro servidor |
+
+**Portal e ACS em servidores separados** — instale nesta ordem:
+1. No servidor do **ACS**: escolha "Só o servidor ACS" e informe o endereço do portal (ex.: `http://192.168.10.3:8080`).
+   Ele é usado para restaurar o Wi-Fi após reset e para o backup incluir os dados do portal. No firewall,
+   o IP do portal já vem sugerido. Se o portal ainda não existir, deixe vazio e rode o instalador de novo depois.
+2. No servidor do **portal**: escolha "Só o Portal" e informe o IP do GenieACS. O instalador **testa a conexão
+   com a API NBI (7557)** na hora e avisa se o firewall do ACS estiver bloqueando. Se o ACS tiver backup,
+   informe o token (no ACS: `grep ^TOKEN= /etc/genieacs-backup/backup.env`).
+
+No modo "Só o Portal" os requisitos de hardware são menores e não há Docker nem MongoDB.
+
+### Verificação do hardware (antes das outras perguntas)
 
 O instalador confere o servidor e mostra um relatório com `[ OK ]`, `[AVISO]` e `[ERRO]`.
 Com algum **ERRO** ele não instala; com **AVISO** você escolhe se continua.
 
-| Item | Mínimo (senão ERRO) | Recomendado (senão AVISO) |
+| Item | Com GenieACS: mínimo / recomendado | Só o Portal: mínimo / recomendado |
 |---|---|---|
-| Arquitetura | amd64 (x86_64) | — |
-| Processador | 2 núcleos | 4 núcleos, com AVX |
-| Memória | 4 GB | 8 GB, com swap |
-| Disco livre em `/var/lib` | 15 GB | 40 GB |
-| Internet | Debian, npm e Docker Hub acessíveis | — |
-| Sistema | — | Debian 12/13 ou Ubuntu 22.04+, relógio sincronizado |
-| Portas | — | 7547, 7557, 7567, 3000, 3100, 27017, 7570 livres |
+| Arquitetura | amd64 (x86_64) | amd64 ou arm64 |
+| Processador | 2 / 4 núcleos, com AVX | 1 / 2 núcleos |
+| Memória | 4 / 8 GB, com swap | 1 / 2 GB |
+| Disco livre em `/var/lib` | 15 / 40 GB | 3 / 10 GB |
+| Internet | Debian, npm e Docker Hub | Debian e npm |
+| Portas livres | 7547, 7557, 7567, 3000, 27017, 7570 (+3100 com portal) | 3100 |
+| Sistema | Debian 12/13 ou Ubuntu 22.04+, relógio sincronizado | igual |
+
+Abaixo do mínimo é ERRO; abaixo do recomendado é AVISO.
 
 Também identifica se é **servidor físico**, **máquina virtual** (Proxmox/KVM, VMware, Hyper-V,
 VirtualBox, Xen) ou **contêiner** (LXC — não recomendado, por causa do Docker). Em VM Proxmox/KVM,
@@ -53,7 +75,7 @@ O assistente pergunta, em ordem:
 
 | Tela | O que pede |
 |---|---|
-| O que instalar | GenieACS, Portal, Backup, Firewall da NBI, arquivo do teste de velocidade |
+| Opções do ACS | Backup, Firewall da NBI, arquivo do teste de velocidade |
 | GenieACS | nome/IP do ACS usado pelos roteadores, porta CWMP, usuário/senha do Connection Request, NTP, memória do MongoDB |
 | SGP | host, APP e TOKEN da API (opcional) |
 | Portal | porta, IP visto pelos roteadores, IP do GenieACS (se estiver em outro servidor), HTTPS, usuário e senha do administrador |
