@@ -35,6 +35,16 @@ Arquivos `*.env` com senhas e tokens **não vão para o Git** (veja `.gitignore`
 - Servidor do portal: Debian 12 ou Ubuntu 22.04+, Node.js 18+ (pacote `nodejs`), nginx.
 - Servidor do GenieACS: Node.js 18+ (já vem com o GenieACS).
 
+## Instalação em servidor novo (assistente)
+
+Para instalar tudo (GenieACS, portal, backup) num servidor Linux novo respondendo a perguntas em telas:
+
+```bash
+bash instalador/instalar.sh      # como root, na pasta do projeto
+```
+
+Detalhes em `instalador/LEIA-ME.md`. As seções abaixo descrevem a instalação manual.
+
 ## 1. Instalar o portal
 
 No servidor do portal, como root:
