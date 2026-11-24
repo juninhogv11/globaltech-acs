@@ -80,5 +80,5 @@ systemctl is-active --quiet globaltech-portal && echo "==> Portal rodando: http:
 echo
 echo "Próximos passos:"
 echo "  1. Revise $APP/.env (NBI_URL, URLs do teste de velocidade) e rode: systemctl restart globaltech-portal"
-echo "  2. Crie o primeiro usuário:  cd $APP && sudo -u portal node scripts/add-user.js admin \"Administrador\""
+echo "  2. Crie o primeiro usuário:  cd $APP && runuser -u portal -- node scripts/add-user.js admin \"Administrador\""
 echo "  3. Libere a porta $PORTAL_PORT no firewall, se houver (ufw/firewalld)."

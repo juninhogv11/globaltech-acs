@@ -24,7 +24,7 @@ MONGO_IMAGE=mongo:4.4.29     # 4.4: roda sem AVX e é a versão usada pelo genie
 PORTAL_APP=/opt/globaltech-portal
 
 # ----------------------------------------------------------------------------- checagens
-[ "$(id -u)" = 0 ] || { echo "Rode como root:  sudo bash $0"; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "Rode como root (entre com 'su -' e depois: bash $0)"; exit 1; }
 [ -f "$SRC/portal/server.js" ] && [ -f "$SRC/acs/deploy-acs.js" ] || {
   echo "Não achei o projeto em $SRC (falta portal/ ou acs/)."; exit 1; }
 . /etc/os-release 2>/dev/null || true
@@ -669,12 +669,31 @@ if [ $I_PORTAL = 1 ]; then
       set_env "$PENV" BACKUP_TOKEN "$BACKUP_TOKEN_EXT"
     fi
   fi
+  ADMIN_OK=1
   if [ -n "${ADMIN_PASS:-}" ]; then
-    ( cd "$PORTAL_APP" && PW="$ADMIN_PASS" runuser -u portal -- node -e '
-      const a = require("./lib/auth"); const u = a.loadUsers();
-      const ex = !!u[process.argv[1]];
-      u[process.argv[1]] = { name: process.argv[2], hash: a.hashPassword(process.env.PW) };
-      a.saveUsers(u); console.log(ex ? "Senha do usuário alterada." : "Usuário criado.");' "$ADMIN_USER" "Administrador" )
+    etapa "Usuário \"$ADMIN_USER\" do portal"
+    # A senha vai pela entrada padrão (printf é interno do bash: não aparece na lista de processos nem no log)
+    if ( cd "$PORTAL_APP" && printf '%s' "$ADMIN_PASS" | runuser -u portal -- node -e '
+        const pw = require("fs").readFileSync(0, "utf8");
+        if (pw.length < 8) { console.error("Senha vazia ou curta."); process.exit(1); }
+        const a = require("./lib/auth"); const u = a.loadUsers();
+        const ex = !!u[process.argv[1]];
+        u[process.argv[1]] = { name: process.argv[2], hash: a.hashPassword(pw) };
+        a.saveUsers(u); console.log(ex ? "Senha do usuário alterada." : "Usuário criado.");' "$ADMIN_USER" "Administrador" ) \
+       && ( cd "$PORTAL_APP" && printf '%s' "$ADMIN_PASS" | runuser -u portal -- node -e '
+        // Confere: lê o arquivo de novo e testa a senha do mesmo jeito que o login faz
+        const c = require("crypto"), fs = require("fs");
+        const pw = fs.readFileSync(0, "utf8");
+        const u = JSON.parse(fs.readFileSync(require("./lib/env").USERS_FILE, "utf8"))[process.argv[1]];
+        const [alg, s, h] = String(u && u.hash).split("$");
+        const ok = alg === "scrypt" && c.scryptSync(pw, Buffer.from(s, "hex"), 64).toString("hex") === h;
+        console.log(ok ? "Senha conferida: o login vai funcionar." : "A senha gravada NÃO confere.");
+        process.exit(ok ? 0 : 1);' "$ADMIN_USER" ); then
+      :
+    else
+      ADMIN_OK=0
+      echo "ATENÇÃO: não foi possível criar/conferir o usuário \"$ADMIN_USER\" (veja as mensagens acima)."
+    fi
   fi
 fi
 
@@ -723,7 +742,15 @@ done
 
 FIM="Instalação concluída!\n\nServiços:\n$OKS\n"
 [ $I_ACS = 1 ] && FIM+="GenieACS (interface): http://$IP_LOCAL:3000  (cria o admin no 1º acesso)\nRoteadores devem apontar para: http://$ACS_HOST:$ACS_PORTA/\n\n"
-[ $I_PORTAL = 1 ] && FIM+="Portal: http://$PORTAL_IP:$PORTAL_PORTA   usuário: $ADMIN_USER\n\n"
+if [ $I_PORTAL = 1 ]; then
+  FIM+="Portal: http://$PORTAL_IP:$PORTAL_PORTA   usuário: $ADMIN_USER\n"
+  if [ "${ADMIN_OK:-1}" = 0 ]; then
+    FIM+="  !! O usuário NÃO foi criado. Crie com:\n"
+  fi
+  FIM+="  Criar/trocar senha de usuário do portal:\n    cd $PORTAL_APP && runuser -u portal -- node scripts/add-user.js $ADMIN_USER \"Administrador\"\n"
+  [ "${COOKIE_SECURE:-0}" = 1 ] && FIM+="  HTTPS ligado: o login só funciona acessando por https:// (por http o navegador descarta o cookie).\n"
+  FIM+="\n"
+fi
 [ $I_BACKUP = 1 ] && FIM+="IMPORTANTE: guarde FORA do servidor a senha de criptografia do backup:\n  cat /etc/genieacs-backup/senha\n\n"
 if [ "$MODO" = ACS ]; then
   FIM+="NO SERVIDOR DO PORTAL (rode este instalador lá, opção \"Só o Portal\"):\n"

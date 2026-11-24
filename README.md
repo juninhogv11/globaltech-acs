@@ -55,7 +55,8 @@ cd globaltech-acs/portal
 bash deploy/install.sh                    # publica na porta 8080 (PORTAL_PORT=80 para outra)
 nano /opt/globaltech-portal/.env          # revise NBI_URL e as URLs do teste de velocidade
 systemctl restart globaltech-portal
-cd /opt/globaltech-portal && sudo -u portal node scripts/add-user.js admin "Administrador"
+cd /opt/globaltech-portal && runuser -u portal -- node scripts/add-user.js admin "Administrador"
+# (runuser já vem no Debian; o sudo nem sempre está instalado)
 ```
 
 O instalador:
