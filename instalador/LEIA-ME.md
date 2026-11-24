@@ -117,6 +117,16 @@ systemctl restart genieacs-cwmp genieacs-nbi genieacs-fs genieacs-ui
 ```
 Veja também `acs/servidor/MIGRACAO-DEBIAN12.md`.
 
+## Problemas comuns
+
+| Sintoma | Causa e solução |
+|---|---|
+| Entra no portal e **volta para a tela de login** | `COOKIE_SECURE=1` acessando por `http://`. Troque para `COOKIE_SECURE=0` em `/opt/globaltech-portal/.env` e `systemctl restart globaltech-portal` (só use 1 com um proxy HTTPS na frente). |
+| "Usuário ou senha inválidos" | Crie/troque a senha: `cd /opt/globaltech-portal && runuser -u portal -- node scripts/add-user.js admin "Administrador"` |
+| "Muitas tentativas. Aguarde 15 minutos." | Bloqueio após 5 erros: `systemctl restart globaltech-portal` libera na hora. |
+| `sudo: command not found` | O Debian sem sudo é normal: use `runuser -u portal --` no lugar de `sudo -u portal`. |
+| `apt-get install` não encontra pacotes | Rode `apt-get update` antes; se o `/etc/apt/sources.list` só tiver `cdrom`, coloque os repositórios `deb.debian.org`. |
+
 ## Depois de instalar
 
 - Interface do GenieACS: `http://IP:3000` (no primeiro acesso ela pede para criar o administrador).

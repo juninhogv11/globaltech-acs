@@ -361,7 +361,9 @@ if [ $I_PORTAL = 1 ]; then
   SGP_URL=$(perguntar "Endereço do SGP para abrir a ficha do cliente (opcional):" "${SGP_URL:-https://${SGP_HOST:-suaempresa.sgp.net.br}}" opcional)
   SPEED_DL=$(perguntar "Arquivo baixado pelos roteadores no teste de velocidade:" "${SPEED_DL:-http://$ACS_HOST/100MB.bin}")
   COOKIE_SECURE=0
-  sim_nao "O portal será acessado por HTTPS (atrás de um proxy com certificado)?" 8 nao && COOKIE_SECURE=1
+  if sim_nao "Já existe um proxy HTTPS (com certificado) NA FRENTE do portal?\n\nEste instalador publica o portal só por HTTP (http://$PORTAL_IP:$PORTAL_PORTA).\nResponda SIM apenas se outro servidor/proxy já entrega o portal por https://.\n\nSe responder SIM e acessar por http://, o login NÃO funciona\n(volta sempre para a tela de entrada).\n\nNa dúvida, responda NÃO." 17 nao; then
+    sim_nao "Confirma? O login só vai funcionar acessando por https://." 8 nao && COOKIE_SECURE=1
+  fi
   ADMIN_USER=$(perguntar "Usuário administrador do portal:" "${ADMIN_USER:-admin}")
   if [ -f "$PORTAL_APP/data/users.json" ] && ! sim_nao "O portal já tem usuários.\n\nDefinir (ou trocar) a senha de \"$ADMIN_USER\" agora?" 10 nao; then
     ADMIN_PASS=""
@@ -748,7 +750,7 @@ if [ $I_PORTAL = 1 ]; then
     FIM+="  !! O usuário NÃO foi criado. Crie com:\n"
   fi
   FIM+="  Criar/trocar senha de usuário do portal:\n    cd $PORTAL_APP && runuser -u portal -- node scripts/add-user.js $ADMIN_USER \"Administrador\"\n"
-  [ "${COOKIE_SECURE:-0}" = 1 ] && FIM+="  HTTPS ligado: o login só funciona acessando por https:// (por http o navegador descarta o cookie).\n"
+  [ "${COOKIE_SECURE:-0}" = 1 ] && FIM+="  HTTPS ligado: o login só funciona acessando por https:// (por http o navegador descarta o cookie).\n  Para usar por http: COOKIE_SECURE=0 em $PORTAL_APP/.env e systemctl restart globaltech-portal\n"
   FIM+="\n"
 fi
 [ $I_BACKUP = 1 ] && FIM+="IMPORTANTE: guarde FORA do servidor a senha de criptografia do backup:\n  cat /etc/genieacs-backup/senha\n\n"
