@@ -15,6 +15,8 @@ REL="$1"; V="$2"; DE="${3:-dev}"
 EST() { node "$REL/atualizador/estado.js" "$@"; }
 passo() { EST passo "$*"; }
 falha() { EST fim erro "$*"; echo "ERRO: $*"; exit 1; }
+# GET local pelo Node (não depende de curl, que nem todo servidor tem): imprime o corpo; falha se não for 2xx
+responde() { node -e 'fetch("http://127.0.0.1:"+process.argv[1]+process.argv[2],{signal:AbortSignal.timeout(2000)}).then(async r=>{if(!r.ok)process.exit(1);process.stdout.write(await r.text())}).catch(()=>process.exit(1))' "$1" "$2" 2>/dev/null; }
 
 TMP=$(mktemp -d /tmp/gt-atualizar.XXXXXX)
 BK="$VAR/anterior/$(date +%Y%m%d-%H%M%S)-$DE"
@@ -55,8 +57,7 @@ if [ "$PORTAL" = 1 ]; then
   ok=0
   for _ in $(seq 1 30); do
     sleep 0.5
-    if curl -fsS --max-time 2 http://127.0.0.1:3199/api/saude 2>/dev/null | grep -q "\"versao\":\"$V\"" \
-      && curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:3199/ && curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:3199/app.js; then ok=1; break; fi
+    if responde 3199 /api/saude | grep -q "\"versao\":\"$V\"" && responde 3199 / >/dev/null && responde 3199 /app.js >/dev/null; then ok=1; break; fi
   done
   kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true
   [ $ok = 1 ] || { cat "$TMP/teste-portal.log"; falha "o portal novo não ligou no teste (nada foi alterado)"; }
@@ -148,7 +149,7 @@ if [ "$PORTAL" = 1 ]; then
   ok=0
   for _ in $(seq 1 40); do
     sleep 0.5
-    curl -fsS --max-time 2 "http://127.0.0.1:$PORTA_PORTAL/api/saude" 2>/dev/null | grep -q "\"versao\":\"$V\"" && { ok=1; break; }
+    responde "$PORTA_PORTAL" /api/saude | grep -q "\"versao\":\"$V\"" && { ok=1; break; }
     # Caindo e sendo religado pelo systemd: não espera os 20 s para voltar
     [ "$(systemctl show -p NRestarts --value globaltech-portal 2>/dev/null || echo 0)" -gt "$R0" ] && { journalctl -u globaltech-portal -n 15 --no-pager; break; }
   done

@@ -4,6 +4,11 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-3 — Correção: atualizar em servidor sem curl
+
+- O atualizador conferia o portal novo com o comando `curl`, que nem todo servidor tem; sem ele, a atualização parava na
+  conferência (sem alterar nada). Agora a conferência usa o próprio Node.
+
 ## v2026.11.25-2 — Correção: botões da página Atualizações
 
 - Corrigido o erro "read-only file system" ao clicar em Verificar agora / Atualizar: o serviço do portal não tinha
