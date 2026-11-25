@@ -13,6 +13,17 @@ function get(doc, path) {
 const v = (o, k) => (o && o[k] && o[k]._value !== undefined ? o[k]._value : undefined);
 const ts = (o, k) => (o && o[k] && o[k]._timestamp) || null;
 
+// Lista de canais: "1,6,11" ou faixa "1-11" (V-SOL V2802DAC)
+function canais(s) {
+  const out = [];
+  for (const p of String(s || "").split(",")) {
+    const m = p.trim().match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) { for (let c = Number(m[1]); c <= Number(m[2]) && out.length < 200; c++) out.push(c); }
+    else if (Number(p)) out.push(Number(p));
+  }
+  return out;
+}
+
 // Instâncias numeradas de um objeto: Device.WiFi.Radio -> [[1, {...}], [2, {...}]]
 function children(doc, path) {
   const o = get(doc, path);
@@ -149,7 +160,7 @@ function tr098(doc) {
         bandwidth: v(w, "X_TP_Bandwidth") || "",
         autoChannel: v(w, "AutoChannelEnable"),
         status: v(w, "Status") || "",
-        possibleChannels: String(v(w, "PossibleChannels") || "").split(",").map(Number).filter(Boolean),
+        possibleChannels: canais(v(w, "PossibleChannels")),
       });
     }
     for (const [, c] of children(doc, `${base}.WLANConfiguration.${i}.AssociatedDevice`)) {

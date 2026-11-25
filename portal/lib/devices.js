@@ -65,6 +65,24 @@ function toDbm(raw) {
   return Math.round(10 * Math.log10(n / 10000) * 100) / 100;
 }
 
+// RX e TX em dBm. A maioria informa em décimos de µW, mas algumas (ex.: V-SOL V2802DAC) já mandam em dBm
+// no mesmo campo X_CT-COM (RX -23, TX 3). Laser de TX em décimos de µW passa de ~3000 (-5 dBm); um TX entre
+// -15 e 10, ou um RX negativo, só pode estar em dBm.
+function opticos(doc) {
+  const rxRaw = first(doc, RX_PATHS), txRaw = first(doc, TX_PATHS);
+  const rxN = Number(rxRaw), txN = Number(txRaw);
+  const emDbm = (rxRaw !== undefined && Number.isFinite(rxN) && rxN < 0) ||
+    (txRaw !== undefined && txRaw !== "" && Number.isFinite(txN) && txN > -15 && txN < 10 && txN !== 0);
+  if (!emDbm) return { rx: toDbm(rxRaw), tx: toDbm(txRaw) };
+  // Em dBm: -40 ou menos (ou 0 no RX) = sem luz
+  const dbm = (raw, semLuz0) => {
+    const n = Number(raw);
+    if (raw === undefined || raw === "" || !Number.isFinite(n) || n <= -40 || (semLuz0 && n === 0)) return null;
+    return Math.round(n * 100) / 100;
+  };
+  return { rx: dbm(rxRaw, true), tx: dbm(txRaw, false) };
+}
+
 // Faixas para receptor GPON classe B+ (sensibilidade -27 dBm, saturação -8 dBm)
 function signalLevel(rx) {
   if (rx === null || rx === undefined) return "none";
@@ -94,7 +112,7 @@ function sgpTag(tags, kind) {
 function normalize(doc) {
   const id = doc._deviceId || {};
   const lastInform = doc._lastInform ? new Date(doc._lastInform) : null;
-  const rx = toDbm(first(doc, RX_PATHS));
+  const { rx, tx } = opticos(doc);
   const online = !!lastInform && Date.now() - lastInform.getTime() < ONLINE_MINUTES * 60000;
   return {
     id: doc._id,
@@ -109,7 +127,7 @@ function normalize(doc) {
     software: freshest(doc, SOFTWARE_PATHS),
     hardware: String(first(doc, HARDWARE_PATHS) || ""),
     rx,
-    tx: toDbm(first(doc, TX_PATHS)),
+    tx,
     signal: signalLevel(rx),
     lastInform: lastInform ? lastInform.toISOString() : null,
     registered: doc._registered || null,

@@ -4,6 +4,12 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-4 — ONU V-SOL V2802DAC
+
+- **V-SOL V2802DAC:** sinal óptico (RX e TX) correto na página do aparelho. Esse modelo informa o sinal já em dBm; antes o
+  portal mostrava o RX vazio e o TX em torno de -35 dBm.
+- Wi-Fi: a lista de canais aparece também nos aparelhos que informam os canais como faixa (ex.: "1-11").
+
 ## v2026.11.25-3 — Correção: atualizar em servidor sem curl
 
 - O atualizador conferia o portal novo com o comando `curl`, que nem todo servidor tem; sem ele, a atualização parava na
