@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Extensão GenieACS: consulta o contrato do cliente no SGP pelo MAC (ext("sistema", "pppoeLoginByMac", mac))
-// Credenciais ficam em /opt/genieacs/sgp.env (SGP_APP e SGP_TOKEN), fora do código.
+// Extensão GenieACS: consulta o contrato do cliente no sistema de gestão (SGP ou Hubsoft)
+// pelo serial ou pelo MAC (ext("sistema", "contratoPorSerial", serial) / ext("sistema", "pppoeLoginByMac", mac)).
+// Configuração em /opt/genieacs/sgp.env, fora do código:
+//   SISTEMA=sgp (padrão)  -> SGP_HOST, SGP_APP, SGP_TOKEN
+//   SISTEMA=hubsoft       -> HUBSOFT_* (consulta feita pelo arquivo "hubsoft" desta mesma pasta)
 
 const fs = require("fs");
 const https = require("https");
+const path = require("path");
 
 const ENV_FILE = process.env.SGP_ENV_FILE || "/opt/genieacs/sgp.env";
 const HOST = "suaempresa.sgp.net.br";
@@ -22,7 +26,12 @@ function credentials() {
   } catch (e) {
     // sem arquivo: tratado abaixo como erro de configuração
   }
-  return { app: env.SGP_APP, token: env.SGP_TOKEN, host: env.SGP_HOST || HOST };
+  return { app: env.SGP_APP, token: env.SGP_TOKEN, host: env.SGP_HOST || HOST, sistema: String(env.SISTEMA || "sgp").toLowerCase() };
+}
+
+// Com SISTEMA=hubsoft, as consultas vão para o arquivo "hubsoft" (mesmas respostas)
+function hubsoft() {
+  return credentials().sistema === "hubsoft" ? require(path.join(__dirname, "hubsoft")) : null;
 }
 
 // No SGP, o serviço IPoE tem como login o MAC WAN no formato "0cef-1507-d70b"
@@ -100,6 +109,8 @@ function consultar(filtro, callback) {
 
 // ext("sistema", "contratoPorSerial", serial): o SGP liga o serviço ao ACS pelo serial do equipamento
 function contratoPorSerial(args, callback) {
+  const hs = hubsoft();
+  if (hs) return hs.contratoPorSerial(args, callback);
   const serial = String(args[0] || "").trim();
   if (!serial) return callback(null, null);
   consultar({ servico_serial: serial }, callback);
@@ -107,6 +118,8 @@ function contratoPorSerial(args, callback) {
 
 // ext("sistema", "pppoeLoginByMac", mac): busca pelo login IPoE (MAC WAN) e, se não achar, pelo campo MAC DHCP
 function pppoeLoginByMac(args, callback) {
+  const hs = hubsoft();
+  if (hs) return hs.pppoeLoginByMac(args, callback);
   const mac = String(args[0] || "");
   const login = macToLogin(mac);
   if (!login) return callback(null, null);

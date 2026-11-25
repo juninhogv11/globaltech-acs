@@ -86,6 +86,9 @@ const PALETTE = ["#2b6bff", "#12a35b", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4
 const statusBadge = (d) =>
   d.online ? `<span class="badge good"><span class="dot"></span>Online</span>` : `<span class="badge bad"><span class="dot"></span>Offline</span>`;
 
+// Nome do sistema de gestão de clientes (SGP, Hubsoft...), vem de /api/me. As tags continuam SGP_*/ERRO_SGP.
+let SISTEMA = "SGP";
+
 // Situação do provisionamento IPoE (tags Provisioned / ERRO_SGP)
 const PROV_ICONS = {
   ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>',
@@ -97,7 +100,7 @@ const STATUS_TAGS = ["Provisioned", "ERRO_SGP"];
 const isHiddenTag = (t) => STATUS_TAGS.includes(t) || /^SGP_(CLIENTE|CONTRATO)_/.test(t);
 function provState(d) {
   if (d.tags.includes("Provisioned")) return ["ok", "Provisionado"];
-  if (d.tags.includes("ERRO_SGP")) return ["err", "Erro no SGP"];
+  if (d.tags.includes("ERRO_SGP")) return ["err", `Erro no ${SISTEMA}`];
   return ["wait", "Aguardando"];
 }
 const provIcon = (d) => { const [k, label] = provState(d); return `<span class="prov ${k}" title="${label}">${PROV_ICONS[k]}</span>`; };
@@ -738,7 +741,7 @@ async function pageDevice(id) {
         </div>
       </div>
       <div class="device-info"><h2>Informações</h2><dl class="kv">
-        <dt>Cliente SGP</dt><dd>${d.sgpCliente ? `${sgpClienteLink(d.sgpCliente)}${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
+        <dt>Cliente ${esc(SISTEMA)}</dt><dd>${d.sgpCliente ? `${sgpClienteLink(d.sgpCliente)}${d.sgpContrato ? ` <span class="muted">· contrato ${esc(d.sgpContrato)}</span>` : ""}` : `<span class="muted">não vinculado</span>`}</dd>
         <dt>Serial</dt><dd>${esc(d.serial)}</dd>
         <dt>Fabricante / modelo</dt><dd>${esc(d.manufacturer)} ${esc(d.model)}</dd>
         ${d.hasOptical ? `<dt>OLT / ONU</dt><dd id="olt-info"><span class="muted">carregando…</span></dd>` : ""}
@@ -1322,7 +1325,7 @@ function pickFirmware(d, files) {
         <ul class="fw-warn">
           <li>O roteador baixa o arquivo, grava e reinicia: o cliente fica alguns minutos sem internet.</li>
           <li>Não desligue nem reinicie durante a atualização (o Reiniciar fica bloqueado por 10 min).</li>
-          <li>Confira depois se o login IPoE no SGP/BNG continua funcionando (a atualização pode trocar o MAC).</li>
+          <li>Confira depois se o login IPoE no ${esc(SISTEMA)}/BNG continua funcionando (a atualização pode trocar o MAC).</li>
           <li>Se o roteador recusar o arquivo, o portal não repete sozinho.</li>
         </ul>
         <div class="fw-actions">
@@ -1685,17 +1688,18 @@ $("#logout").addEventListener("click", async () => {
   location.href = "/login.html";
 });
 
-// Código do cliente com link para a ficha no SGP (nova aba)
-let SGP_URL = "";
+// Código do cliente com link para a ficha no sistema de gestão (SGP, Hubsoft...) em nova aba
+let CLIENTE_URL = "";
 function sgpClienteLink(id) {
   const tag = `<b class="client-id">${esc(id)}</b>`;
-  if (!SGP_URL || !/^\d+$/.test(String(id))) return tag;
-  return `<a href="${esc(SGP_URL)}/admin/cliente/${enc(id)}/contratos/" target="_blank" rel="noopener noreferrer" title="Abrir o cliente no SGP">${tag} ↗</a>`;
+  if (!CLIENTE_URL || !/^\d+$/.test(String(id))) return tag;
+  return `<a href="${esc(CLIENTE_URL.split("{id}").join(enc(id)))}" target="_blank" rel="noopener noreferrer" title="Abrir o cliente no ${esc(SISTEMA)}">${tag} ↗</a>`;
 }
 
 (async () => {
   const me = await api("/me");
-  SGP_URL = me.sgpUrl || "";
+  CLIENTE_URL = me.clienteUrl || "";
+  SISTEMA = me.sistema || "SGP";
   $("#username").textContent = me.name;
   $("#avatar").textContent = (me.name || "?")[0].toUpperCase();
   window.addEventListener("hashchange", () => route());

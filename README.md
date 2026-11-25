@@ -111,12 +111,38 @@ são **exemplos**. Preencha com os endereços reais antes de usar:
 
 | Arquivo | Chaves |
 |---|---|
-| `/opt/globaltech-portal/.env` (servidor do portal) | `NBI_URL`, `SPEEDTEST_DOWNLOAD_URL`, `SPEEDTEST_UPLOAD_BASE`, `WIFI_BACKUP_ALLOW` |
-| `/opt/genieacs/sgp.env` (servidor do GenieACS) | `SGP_HOST`, `SGP_APP`, `SGP_TOKEN`, `WIFI_PORTAL_URL` |
+| `/opt/globaltech-portal/.env` (servidor do portal) | `NBI_URL`, `SPEEDTEST_DOWNLOAD_URL`, `SPEEDTEST_UPLOAD_BASE`, `WIFI_BACKUP_ALLOW`, `SISTEMA_NOME`, `SGP_URL` ou `CLIENTE_URL` |
+| `/opt/genieacs/sgp.env` (servidor do GenieACS) | `SISTEMA` (`sgp` ou `hubsoft`), `SGP_HOST`, `SGP_APP`, `SGP_TOKEN` **ou** `HUBSOFT_URL`, `HUBSOFT_CLIENT_ID`, `HUBSOFT_CLIENT_SECRET`, `HUBSOFT_USUARIO`, `HUBSOFT_SENHA`; `WIFI_PORTAL_URL` |
 | `acs/acs.env` (onde rodar o `deploy-acs.js`) | `NBI_URL`, `ACS_URL`, `CR_USER`, `CR_PASS`, `SPEEDTEST_URL`, `NTP_SERVER` |
 
 Ao atualizar uma instalação antiga, confira se essas chaves existem: versões anteriores
 tinham alguns desses endereços fixos no código.
+
+## Sistema de gestão de clientes: SGP ou Hubsoft
+
+O ACS consulta o contrato do cliente no sistema de gestão escolhido em `SISTEMA=` no `/opt/genieacs/sgp.env`
+(sem essa chave, vale `sgp`, como nas instalações antigas). A extensão `sistema` faz a mesma consulta nos dois,
+então provisions e portal funcionam igual; as tags continuam `SGP_CLIENTE_<id>`, `SGP_CONTRATO_<id>` e `ERRO_SGP`.
+
+| | SGP | Hubsoft |
+|---|---|---|
+| Autenticação | `SGP_APP` + `SGP_TOKEN` | oAuth (`client_id`, `client_secret`, usuário e senha da API); token de 30 dias guardado em `/opt/genieacs/.hubsoft-token.json` |
+| Pelo serial | `servico_serial` | CPE vinculada à autenticação (`phy_addr` = serial da ONU) e, se não achar, patrimônio (`numero_serie`) |
+| Pelo MAC WAN | login `xxxx-xxxx-xxxx`, depois `mac_dhcp` | `login_radius` `xxxx-xxxx-xxxx`, depois campo `mac` |
+| Código do cliente / contrato (tags) | `clienteId` / `contratoId` | `id_cliente` / `id_cliente_servico` |
+| Cancelado (ignorado) | status do contrato "Cancelado" | status do serviço `cancelado` |
+| Wi-Fi para restaurar após reset | campos de Wi-Fi do contrato | **Documentação de Senhas** do serviço: descrição com "Wi-Fi" (ou SSID), usuário = nome da rede, senha = senha da rede; "5G" na descrição = rede de 5 GHz |
+
+Com Hubsoft, o instalador coloca `GENIEACS_EXT_TIMEOUT=10000` no `genieacs.env` (uma consulta pode precisar de
+até 3 requisições). Teste manual no servidor do ACS:
+
+```bash
+cd /opt/genieacs && runuser -u genieacs -- node ext/hubsoft --testar              # só o login na API
+cd /opt/genieacs && runuser -u genieacs -- node ext/hubsoft --testar TPLG12345678 # busca por serial (ou MAC)
+```
+
+No portal, `SISTEMA_NOME` muda o nome mostrado ("Cliente Hubsoft", "Erro no Hubsoft") e `CLIENTE_URL`
+(com `{id}`) define o link para abrir o cliente.
 
 ## Como funciona o provisionamento
 

@@ -77,7 +77,7 @@ O assistente pergunta, em ordem:
 |---|---|
 | Opções do ACS | Backup, Firewall da NBI, arquivo do teste de velocidade |
 | GenieACS | nome/IP do ACS usado pelos roteadores, porta CWMP, usuário/senha do Connection Request, NTP, memória do MongoDB |
-| SGP | host, APP e TOKEN da API (opcional) |
+| Sistema de gestão | **SGP** (host, APP e TOKEN), **Hubsoft** (URL da API, client_id, client_secret, usuário e senha da API — o login é testado na hora) ou nenhum |
 | Portal | porta, IP visto pelos roteadores, IP do GenieACS (se estiver em outro servidor), HTTPS, usuário e senha do administrador |
 | Backup | destino FTP/FTPS/SFTP, usuário, senha e senha de criptografia |
 | Firewall | IPs que podem acessar a API NBI (7557) e a API de backup (7570) |
@@ -116,6 +116,18 @@ ssh antigo 'mongodump --db genieacs --gzip --archive' | docker exec -i mongodb m
 systemctl restart genieacs-cwmp genieacs-nbi genieacs-fs genieacs-ui
 ```
 Veja também `acs/servidor/MIGRACAO-DEBIAN12.md`.
+
+## Hubsoft
+
+- Peça ao administrador do Hubsoft os dados de API: **URL da API**, **client_id**, **client_secret**,
+  **usuário** e **senha** da API. O instalador testa o login antes de seguir.
+- Para o ACS achar o cliente, o serviço no Hubsoft precisa ter **um** destes: a CPE/ONU vinculada à
+  autenticação (serial), o equipamento no patrimônio em comodato (número de série), o login RADIUS igual
+  ao MAC WAN (`0cef-1507-d70b`) ou o MAC WAN no campo MAC da autenticação.
+- Wi-Fi para restaurar após reset: cadastre na **Documentação de Senhas** do serviço uma linha com descrição
+  "Wi-Fi" (usuário = nome da rede, senha = senha da rede) e, se houver, outra "Wi-Fi 5G".
+- Servidor que já estava instalado com SGP: atualize o código (`git pull`) e rode o instalador de novo
+  escolhendo Hubsoft — ele grava `SISTEMA=hubsoft` e publica a extensão nova.
 
 ## Problemas comuns
 

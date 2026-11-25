@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Extensão GenieACS: Wi-Fi guardado para restaurar após reset de fábrica.
 // ext("wifibackup", "get", serial) -> JSON {"source", "wifi": {"2.4GHz": {ssid, pass}, "5GHz": {...}}} ou "" se não houver.
-// Ordem: cópia do portal (gravada ao alterar o Wi-Fi pelo portal) e, se não houver, os campos de Wi-Fi do contrato no SGP.
+// Ordem: cópia do portal (gravada ao alterar o Wi-Fi pelo portal) e, se não houver, o Wi-Fi do sistema de gestão:
+// SGP = campos de Wi-Fi do contrato; Hubsoft = "Documentação de Senhas" do serviço (descrição com Wi-Fi/SSID).
 
 const fs = require("fs");
 const http = require("http");
@@ -44,6 +45,16 @@ function fromPortal(serial, cb) {
   req.on("error", () => done(null));
 }
 
+function nomeSistema() {
+  try {
+    const m = fs.readFileSync(ENV_FILE, "utf8").match(/^\s*SISTEMA\s*=\s*["']?([A-Za-z]+)/m);
+    if (m) return m[1].toLowerCase();
+  } catch (e) {
+    // sem arquivo: SGP
+  }
+  return "sgp";
+}
+
 function fromSgp(serial, cb) {
   let sistema;
   try {
@@ -51,12 +62,13 @@ function fromSgp(serial, cb) {
   } catch (e) {
     return cb(null);
   }
-  sistema.contratoPorSerial([serial], (err, c) => {
+  // "wifi": no Hubsoft busca também a Documentação de Senhas do serviço (o SGP ignora esse argumento)
+  sistema.contratoPorSerial([serial, "wifi"], (err, c) => {
     if (!c || c.error) return cb(null);
     const wifi = {};
     if (c.wifi_ssid && c.wifi_password) wifi["2.4GHz"] = { ssid: c.wifi_ssid, pass: c.wifi_password };
     if (c.wifi_ssid_5 && c.wifi_password_5) wifi["5GHz"] = { ssid: c.wifi_ssid_5, pass: c.wifi_password_5 };
-    cb(Object.keys(wifi).length ? { source: "sgp", wifi } : null);
+    cb(Object.keys(wifi).length ? { source: nomeSistema(), wifi } : null);
   });
 }
 

@@ -305,6 +305,30 @@ tem() { [[ " $ESCOLHA " == *"\"$1\""* ]]; }
 I_BACKUP=0; I_FIREWALL=0; I_SPEED=0
 tem BACKUP && I_BACKUP=1; tem FIREWALL && I_FIREWALL=1; tem SPEED && I_SPEED=1
 
+# --- 1b. Sistema de gestão de clientes (ERP)
+selsis() { [ "${SISTEMA:-sgp}" = "$1" ] && echo ON || echo OFF; }
+SISTEMA=$(whiptail --title "$TITULO" --radiolist "Sistema de gestão de clientes (ERP) do provedor:\n\nO ACS consulta nele o contrato pelo serial/MAC do equipamento\ne o Wi-Fi para restaurar após reset." 16 78 3 \
+  sgp     "SGP"                                   "$(selsis sgp)" \
+  hubsoft "Hubsoft"                               "$(selsis hubsoft)" \
+  nenhum  "Nenhum (sem consulta automática)"     "$(selsis nenhum)" \
+  3>&1 1>&2 2>&3) || cancelar
+case "$SISTEMA" in sgp) SISTEMA_NOME=SGP ;; hubsoft) SISTEMA_NOME=Hubsoft ;; *) SISTEMA_NOME=SGP ;; esac
+
+# Escapa texto para dentro de uma string JSON
+json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# Testa o login na API do Hubsoft (oAuth). Os dados vão pela entrada padrão do curl, não pela linha de comando.
+testar_hubsoft() {
+  local r
+  r=$(printf '{"client_id":"%s","client_secret":"%s","username":"%s","password":"%s","grant_type":"password"}' \
+      "$(json_str "$HUBSOFT_CLIENT_ID")" "$(json_str "$HUBSOFT_CLIENT_SECRET")" "$(json_str "$HUBSOFT_USUARIO")" "$(json_str "$HUBSOFT_SENHA")" \
+    | curl -s --max-time 15 -H 'Content-Type: application/json' -H 'Accept: application/json' -d @- "$HUBSOFT_URL/oauth/token" || true)
+  if printf '%s' "$r" | grep -q '"access_token"'; then return 0; fi
+  HUBSOFT_ERRO=$(printf '%s' "$r" | grep -o '"message" *: *"[^"]*"' | head -1 | cut -d'"' -f4)
+  [ -z "$HUBSOFT_ERRO" ] && HUBSOFT_ERRO=${r:0:120}
+  [ -z "$HUBSOFT_ERRO" ] && HUBSOFT_ERRO="sem resposta de $HUBSOFT_URL"
+  return 1
+}
+
 # --- 2. GenieACS
 if [ $I_ACS = 1 ]; then
   ACS_HOST=$(perguntar "Nome ou IP que os ROTEADORES usam para falar com o ACS\n(ex.: acs.suaempresa.com.br ou $IP_LOCAL):" "${ACS_HOST:-$IP_LOCAL}")
@@ -315,12 +339,30 @@ if [ $I_ACS = 1 ]; then
   def_cache=$(( RAM_GB / 2 - 1 )); [ $def_cache -lt 1 ] && def_cache=1
   MONGO_CACHE=$(perguntar "Memória do MongoDB em GB (cache WiredTiger).\nRecomendado: metade da RAM menos 1 (este servidor: ${RAM_GB} GB):" "${MONGO_CACHE:-$def_cache}")
 
-  if sim_nao "Integrar com o SGP?\n\n(consulta do contrato pelo serial/MAC e restauração do Wi-Fi a partir do SGP)" 11; then
-    SGP_HOST=$(perguntar "Endereço da API do SGP (sem https://):" "${SGP_HOST:-suaempresa.sgp.net.br}")
+  SGP_HOST=${SGP_HOST:-suaempresa.sgp.net.br}; SGP_TOKEN=""; HUBSOFT_CLIENT_SECRET=""; HUBSOFT_SENHA=""
+  [ "$SISTEMA" = sgp ] || SGP_APP=""
+  if [ "$SISTEMA" = sgp ]; then
+    SGP_HOST=$(perguntar "Endereço da API do SGP (sem https://):" "$SGP_HOST")
     SGP_APP=$(perguntar "SGP — nome do APP (app):" "${SGP_APP:-}")
     SGP_TOKEN=$(senha "SGP — TOKEN da API:")
-  else
-    SGP_HOST=${SGP_HOST:-suaempresa.sgp.net.br}; SGP_APP=""; SGP_TOKEN=""
+  elif [ "$SISTEMA" = hubsoft ]; then
+    aviso "Hubsoft: use os dados de API criados pelo administrador do Hubsoft:\nURL da API, client_id, client_secret, usuário e senha da API.\n\n(documentação: https://docs.hubsoft.com.br)" 12
+    while true; do
+      while true; do
+        HUBSOFT_URL=$(perguntar "Hubsoft — URL da API (ex.: https://api.suaempresa.hubsoft.com.br):" "${HUBSOFT_URL:-https://api.}")
+        HUBSOFT_URL=${HUBSOFT_URL%/}
+        [[ "$HUBSOFT_URL" =~ ^https?://[^/]+$ ]] && break
+        aviso "Use só o endereço, sem caminho (ex.: https://api.suaempresa.hubsoft.com.br)." 8
+      done
+      HUBSOFT_CLIENT_ID=$(perguntar "Hubsoft — client_id:" "${HUBSOFT_CLIENT_ID:-}")
+      HUBSOFT_CLIENT_SECRET=$(senha "Hubsoft — client_secret:")
+      HUBSOFT_USUARIO=$(perguntar "Hubsoft — usuário da API:" "${HUBSOFT_USUARIO:-}")
+      HUBSOFT_SENHA=$(senha "Hubsoft — senha do usuário da API:")
+      if testar_hubsoft; then
+        aviso "Login na API do Hubsoft: OK." 8; break
+      fi
+      sim_nao "NÃO consegui entrar na API do Hubsoft:\n\n  $HUBSOFT_ERRO\n\nConfira a URL, o client_id/client_secret e o usuário/senha da API.\n\nContinuar assim mesmo? (Não = digitar de novo)" 15 nao && break
+    done
   fi
 
   if [ $I_PORTAL = 0 ]; then
@@ -358,7 +400,15 @@ if [ $I_PORTAL = 1 ]; then
       BACKUP_TOKEN_EXT=$(senha "TOKEN do backup (copie do servidor ACS: grep ^TOKEN= /etc/genieacs-backup/backup.env):")
     fi
   fi
-  SGP_URL=$(perguntar "Endereço do SGP para abrir a ficha do cliente (opcional):" "${SGP_URL:-https://${SGP_HOST:-suaempresa.sgp.net.br}}" opcional)
+  if [ "$SISTEMA" = hubsoft ]; then
+    SGP_URL=""
+    CLIENTE_URL=$(perguntar "Link para abrir o cliente no Hubsoft (opcional).\nAbra um cliente no Hubsoft, copie o endereço do navegador e troque\no número do cliente (id_cliente) por {id}. Vazio = sem link." "${CLIENTE_URL:-}" opcional)
+  elif [ "$SISTEMA" = sgp ]; then
+    CLIENTE_URL=""
+    SGP_URL=$(perguntar "Endereço do SGP para abrir a ficha do cliente (opcional):" "${SGP_URL:-https://${SGP_HOST:-suaempresa.sgp.net.br}}" opcional)
+  else
+    SGP_URL=""; CLIENTE_URL=""
+  fi
   SPEED_DL=$(perguntar "Arquivo baixado pelos roteadores no teste de velocidade:" "${SPEED_DL:-http://$ACS_HOST/100MB.bin}")
   COOKIE_SECURE=0
   if sim_nao "Já existe um proxy HTTPS (com certificado) NA FRENTE do portal?\n\nEste instalador publica o portal só por HTTP (http://$PORTAL_IP:$PORTAL_PORTA).\nResponda SIM apenas se outro servidor/proxy já entrega o portal por https://.\n\nSe responder SIM e acessar por http://, o login NÃO funciona\n(volta sempre para a tela de entrada).\n\nNa dúvida, responda NÃO." 17 nao; then
@@ -395,7 +445,7 @@ if [ $I_FIREWALL = 1 ]; then
   while true; do
     def_fw="${FW_IPS:-}"
     if [ -z "$def_fw" ] && [ -n "${PORTAL_EXT_HOST:-}" ] && ip_valido "$PORTAL_EXT_HOST"; then def_fw="$PORTAL_EXT_HOST"; fi
-    FW_IPS=$(perguntar "IPs que podem acessar a API NBI (7557) e a API de backup (7570),\nseparados por vírgula (portal, SGP). Este próprio servidor já é liberado:" "$def_fw" opcional)
+    FW_IPS=$(perguntar "IPs que podem acessar a API NBI (7557) e a API de backup (7570),\nseparados por vírgula (portal, sistema de gestão). Este próprio servidor já é liberado:" "$def_fw" opcional)
     FW_IPS=$(echo "$FW_IPS" | tr -d ' ')
     ruim=""; for ip in ${FW_IPS//,/ }; do ip_valido "$ip" || ruim="$ip"; done
     [ -n "$ruim" ] && { aviso "IP inválido na lista: $ruim" 8; continue; }
@@ -410,7 +460,8 @@ fi
 if [ $I_ACS = 1 ]; then
   T_LIMPEZA=0; T_RESTART=1
   sim_nao "Ativar o reinício semanal do NBI/FS (domingo 06:30)?\n(libera memória acumulada — recomendado)" 10 || T_RESTART=0
-  sim_nao "Ativar a LIMPEZA automática diária (07:00)?\n\nApaga do GenieACS equipamentos offline há 7+ dias que não estão\nvinculados ao SGP ou com contrato cancelado (máx. 10 por dia).\n\nSó ative se o SGP estiver configurado." 14 nao && T_LIMPEZA=1
+  sim_nao "Ativar a LIMPEZA automática diária (07:00)?\n\nApaga do GenieACS equipamentos offline há 7+ dias que não estão\nvinculados ao $SISTEMA_NOME ou com contrato cancelado (máx. 10 por dia).\n\nSó ative se o $SISTEMA_NOME estiver configurado." 14 nao && T_LIMPEZA=1
+  [ "$SISTEMA" = nenhum ] && T_LIMPEZA=0
 fi
 
 # --- Resumo
@@ -424,7 +475,11 @@ if [ $I_ACS = 1 ]; then
   RESUMO+="GENIEACS $GENIEACS_VERSION + $MONGO_IMAGE (Docker, cache ${MONGO_CACHE} GB)\n"
   RESUMO+="  ACS dos roteadores: http://$ACS_HOST:$ACS_PORTA/\n"
   RESUMO+="  Connection Request: $CR_USER / ******    NTP: $NTP_SERVER\n"
-  if [ -n "$SGP_APP" ]; then RESUMO+="  SGP: $SGP_HOST (app $SGP_APP)\n"; else RESUMO+="  SGP: não integrado\n"; fi
+  case "$SISTEMA" in
+    sgp)     RESUMO+="  Sistema de gestão: SGP — $SGP_HOST (app ${SGP_APP:-?})\n" ;;
+    hubsoft) RESUMO+="  Sistema de gestão: Hubsoft — ${HUBSOFT_URL:-?} (client_id ${HUBSOFT_CLIENT_ID:-?})\n" ;;
+    *)       RESUMO+="  Sistema de gestão: nenhum (sem consulta automática)\n" ;;
+  esac
   RESUMO+="  Reinício semanal: $([ $T_RESTART = 1 ] && echo sim || echo não)   Limpeza offline: $([ $T_LIMPEZA = 1 ] && echo sim || echo não)\n"
   RESUMO+="  Teste de velocidade (100MB.bin na porta 80): $([ $I_SPEED = 1 ] && echo sim || echo não)\n"
   RESUMO+="  Firewall NBI: $([ $I_FIREWALL = 1 ] && echo "liberado para 127.0.0.1,$IP_LOCAL${FW_IPS:+,$FW_IPS}" || echo não)\n"
@@ -442,7 +497,7 @@ sim_nao "$RESUMO\nInstalar agora?" 26 || { clear; echo "Instalação cancelada. 
 
 # Salva as respostas (sem senhas) para a próxima vez
 ( umask 077
-  for k in MODO PORTAL_EXT_URL I_ACS I_PORTAL I_BACKUP I_FIREWALL I_SPEED ACS_HOST ACS_PORTA CR_USER NTP_SERVER MONGO_CACHE SGP_HOST SGP_APP \
+  for k in MODO SISTEMA HUBSOFT_URL HUBSOFT_CLIENT_ID HUBSOFT_USUARIO CLIENTE_URL PORTAL_EXT_URL I_ACS I_PORTAL I_BACKUP I_FIREWALL I_SPEED ACS_HOST ACS_PORTA CR_USER NTP_SERVER MONGO_CACHE SGP_HOST SGP_APP \
            PORTAL_PORTA PORTAL_IP ACS_IP SGP_URL SPEED_DL ADMIN_USER BK_URL BK_USER FW_IPS; do
     printf '%s=%q\n' "$k" "${!k:-}"
   done > "$RESP" )
@@ -535,9 +590,22 @@ EOF
 
   SGPENV=/opt/genieacs/sgp.env
   do_exemplo "$SRC/acs/sgp.env.example" $SGPENV
+  # "nenhum" fica como sgp sem credenciais: a provision marca ERRO_SGP e não mexe em nada
+  set_env $SGPENV SISTEMA "$([ "$SISTEMA" = hubsoft ] && echo hubsoft || echo sgp)"
   set_env $SGPENV SGP_HOST "$SGP_HOST"
   set_env $SGPENV SGP_APP "$SGP_APP"
   [ -n "${SGP_TOKEN:-}" ] && set_env $SGPENV SGP_TOKEN "$SGP_TOKEN"
+  [ "$SISTEMA" = nenhum ] && set_env $SGPENV SGP_TOKEN ""
+  if [ "$SISTEMA" = hubsoft ]; then
+    set_env $SGPENV HUBSOFT_URL "$HUBSOFT_URL"
+    set_env $SGPENV HUBSOFT_CLIENT_ID "$HUBSOFT_CLIENT_ID"
+    set_env $SGPENV HUBSOFT_USUARIO "$HUBSOFT_USUARIO"
+    [ -n "${HUBSOFT_CLIENT_SECRET:-}" ] && set_env $SGPENV HUBSOFT_CLIENT_SECRET "$HUBSOFT_CLIENT_SECRET"
+    [ -n "${HUBSOFT_SENHA:-}" ] && set_env $SGPENV HUBSOFT_SENHA "$HUBSOFT_SENHA"
+    rm -f /opt/genieacs/.hubsoft-token.json      # credenciais podem ter mudado: pega token novo
+    # Uma consulta no Hubsoft pode precisar de 3 requisições (token + CPE/patrimônio + serviço)
+    set_env $GENV GENIEACS_EXT_TIMEOUT 10000
+  fi
   if [ $I_PORTAL = 1 ]; then
     set_env $SGPENV WIFI_PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"
   elif [ -n "${PORTAL_EXT_URL:-}" ]; then
@@ -605,6 +673,11 @@ EOF
     ( cd "$SRC/acs" && node deploy-acs.js --install-ext )
     chown genieacs:genieacs /opt/genieacs/ext/*
     systemctl restart genieacs-cwmp
+    if [ "$SISTEMA" = hubsoft ] && [ -f /opt/genieacs/ext/hubsoft ]; then
+      etapa "Teste da extensão com o Hubsoft (como o usuário genieacs)"
+      ( cd /opt/genieacs && runuser -u genieacs -- node /opt/genieacs/ext/hubsoft --testar ) \
+        || echo "ATENÇÃO: a extensão não conseguiu entrar no Hubsoft. Confira HUBSOFT_* em /opt/genieacs/sgp.env."
+    fi
   else
     echo "Publicação pulada. Para publicar depois: cd $SRC/acs && node deploy-acs.js --install-ext"
   fi
@@ -659,6 +732,8 @@ if [ $I_PORTAL = 1 ]; then
   PENV="$PORTAL_APP/.env"
   set_env "$PENV" NBI_URL "$NBI_URL_PORTAL"
   set_env "$PENV" SGP_URL "$SGP_URL"
+  set_env "$PENV" SISTEMA_NOME "$SISTEMA_NOME"
+  set_env "$PENV" CLIENTE_URL "${CLIENTE_URL:-}"
   set_env "$PENV" COOKIE_SECURE "$COOKIE_SECURE"
   set_env "$PENV" SPEEDTEST_DOWNLOAD_URL "$SPEED_DL"
   set_env "$PENV" SPEEDTEST_UPLOAD_BASE "http://$PORTAL_IP:$PORTAL_PORTA/speedtest/upload"

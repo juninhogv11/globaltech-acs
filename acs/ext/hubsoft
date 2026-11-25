@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+"use strict";
+// Consulta ao Hubsoft (ERP) usada pela extensão "sistema" quando SISTEMA=hubsoft no sgp.env.
+// Devolve as mesmas respostas da versão SGP, para as provisions e o portal não mudarem:
+//   { cliente, contrato, username, status, wifi_* }  contrato ativo encontrado
+//   { cancelado: true, cliente, contrato, status }   só achou serviço cancelado
+//   null                                             não encontrado
+//   { error }                                        falha na consulta (nunca lança exceção)
+//
+// "cliente" = id_cliente do Hubsoft; "contrato" = id_cliente_servico (o serviço do cliente).
+// Configuração em /opt/genieacs/sgp.env: HUBSOFT_URL, HUBSOFT_CLIENT_ID, HUBSOFT_CLIENT_SECRET,
+// HUBSOFT_USUARIO, HUBSOFT_SENHA. O token (válido 30 dias) fica em memória e em HUBSOFT_TOKEN_FILE.
+// API: https://docs.hubsoft.com.br (oAuth password grant; limite 20 req/s por IP).
+
+const fs = require("fs");
+const http = require("http");
+const https = require("https");
+
+const ENV_FILE = process.env.SGP_ENV_FILE || "/opt/genieacs/sgp.env";
+const TOKEN_FILE = process.env.HUBSOFT_TOKEN_FILE === undefined ? "/opt/genieacs/.hubsoft-token.json" : process.env.HUBSOFT_TOKEN_FILE;
+// Por requisição. Uma busca pode fazer até 3 requisições: GENIEACS_EXT_TIMEOUT precisa ser maior (o instalador usa 10000)
+const TIMEOUT_MS = Number(process.env.HUBSOFT_TIMEOUT_MS || 3000);
+const API = "/api/v1/integracao";
+
+function conf() {
+  const env = {};
+  try {
+    for (const line of fs.readFileSync(ENV_FILE, "utf8").split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  } catch (e) {
+    // sem arquivo: tratado como configuração ausente
+  }
+  return {
+    url: String(env.HUBSOFT_URL || "").replace(/\/+$/, ""),
+    client_id: env.HUBSOFT_CLIENT_ID || "",
+    client_secret: env.HUBSOFT_CLIENT_SECRET || "",
+    username: env.HUBSOFT_USUARIO || "",
+    password: env.HUBSOFT_SENHA || "",
+  };
+}
+
+function request(method, url, { body, token } = {}) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(url); } catch (e) { return reject(new Error(`HUBSOFT_URL inválida: ${url}`)); }
+    const mod = u.protocol === "http:" ? http : https;
+    const data = body === undefined ? undefined : JSON.stringify(body);
+    const headers = { Accept: "application/json" };
+    if (data) { headers["Content-Type"] = "application/json"; headers["Content-Length"] = Buffer.byteLength(data); }
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const req = mod.request(u, { method, timeout: TIMEOUT_MS, headers }, (res) => {
+      let t = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => (t += c));
+      res.on("end", () => {
+        let json = null;
+        try { json = t ? JSON.parse(t) : null; } catch (e) { /* resposta não JSON */ }
+        resolve({ status: res.statusCode, json, text: t });
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error(`Hubsoft não respondeu em ${TIMEOUT_MS} ms`)));
+    req.on("error", reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+// ---------- token (oAuth) ----------
+let cache = null; // { key, token, exp }
+const chave = (c) => `${c.url}|${c.client_id}|${c.username}`;
+
+function lerTokenSalvo(c) {
+  if (!TOKEN_FILE) return null;
+  try {
+    const t = JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
+    return t && t.key === chave(c) && t.exp > Date.now() + 3600000 ? t : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function token(c, forcar) {
+  if (!forcar) {
+    if (cache && cache.key === chave(c) && cache.exp > Date.now() + 3600000) return cache.token;
+    const salvo = lerTokenSalvo(c);
+    if (salvo) { cache = salvo; return salvo.token; }
+  }
+  const r = await request("POST", `${c.url}/oauth/token`, {
+    body: { client_id: c.client_id, client_secret: c.client_secret, username: c.username, password: c.password, grant_type: "password" },
+  });
+  if (r.status !== 200 || !r.json || !r.json.access_token) {
+    const msg = (r.json && (r.json.message || r.json.error)) || `HTTP ${r.status}`;
+    throw new Error(`Hubsoft: login da API falhou (${msg})`);
+  }
+  cache = { key: chave(c), token: r.json.access_token, exp: Date.now() + Number(r.json.expires_in || 86400) * 1000 };
+  if (TOKEN_FILE) {
+    try { fs.writeFileSync(TOKEN_FILE, JSON.stringify(cache), { mode: 0o600 }); } catch (e) { /* só perde o cache em disco */ }
+  }
+  return cache.token;
+}
+
+// GET na API com o token; renova o token uma vez se a API recusar (401)
+async function get(c, caminho) {
+  let r = await request("GET", c.url + caminho, { token: await token(c, false) });
+  if (r.status === 401) r = await request("GET", c.url + caminho, { token: await token(c, true) });
+  if (r.status === 429) throw new Error("Hubsoft: limite de requisições excedido (429)");
+  if (r.status === 404) return null;
+  if (r.status !== 200 || !r.json) throw new Error(`Hubsoft HTTP ${r.status}: ${String(r.text).slice(0, 150)}`);
+  return r.json;
+}
+
+function exigirConf() {
+  const c = conf();
+  if (!c.url || !c.client_id || !c.client_secret || !c.username || !c.password) {
+    throw new Error(`Hubsoft: configuração incompleta em ${ENV_FILE} (HUBSOFT_URL, HUBSOFT_CLIENT_ID, HUBSOFT_CLIENT_SECRET, HUBSOFT_USUARIO, HUBSOFT_SENHA)`);
+  }
+  return c;
+}
+
+// ---------- consultas ----------
+const q = encodeURIComponent;
+const cancelado = (s) => String(s.status_prefixo || s.status || "").toLowerCase().startsWith("cancelad");
+const normMac = (m) => String(m || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+
+// Clientes pela busca do Hubsoft, já com os serviços cancelados (para saber que o vínculo é antigo)
+async function clientes(c, busca, termo) {
+  const j = await get(c, `${API}/cliente?busca=${q(busca)}&termo_busca=${q(termo)}&cancelado=sim&limit=5`);
+  return (j && Array.isArray(j.clientes)) ? j.clientes : [];
+}
+
+// Escolhe o serviço que atende ao filtro: o 1º não cancelado; senão informa que só há cancelado
+function escolher(lista, filtro) {
+  const pares = [];
+  for (const cli of lista) for (const s of cli.servicos || []) if (filtro(s)) pares.push({ cli, s });
+  const ativo = pares.find((p) => !cancelado(p.s));
+  if (ativo) {
+    return {
+      cliente: ativo.cli.id_cliente,
+      contrato: ativo.s.id_cliente_servico,
+      // A provision só considera encontrado quando há "username"; serviço sem login usa o id do serviço
+      username: ativo.s.login || String(ativo.s.id_cliente_servico),
+      status: ativo.s.status || ativo.s.status_prefixo || "",
+    };
+  }
+  const x = pares[0];
+  return x ? { cancelado: true, cliente: x.cli.id_cliente, contrato: x.s.id_cliente_servico, status: x.s.status || "Cancelado" } : null;
+}
+
+const porServico = async (c, id) => escolher(await clientes(c, "id_cliente_servico", id), (s) => String(s.id_cliente_servico) === String(id));
+
+// Pelo serial: 1º CPE vinculada à autenticação (phy_addr = serial da ONU), 2º patrimônio em comodato (número de série)
+async function buscarSerial(c, serial) {
+  const cpe = await get(c, `${API}/rede/cpe/todos?pagina=0&itens_por_pagina=20&busca=phy_addr&termo_busca=${q(serial)}&somente_assinante_associado=nao`);
+  const ids = [];
+  for (const x of (cpe && cpe.cpes) || []) {
+    if (String(x.phy_addr || "").toLowerCase() !== serial.toLowerCase()) continue;
+    for (const s of x.servicos || []) ids.push({ id: s.id_cliente_servico, ativo: !cancelado(s) });
+  }
+  if (!ids.length) {
+    const pat = await get(c, `${API}/estoque/produto_item/consultar?busca=numero_serie&termo_busca=${q(serial)}`);
+    for (const p of (pat && pat.produto) || []) {
+      if (String(p.numero_serie || "").toLowerCase() === serial.toLowerCase() && p.cliente_servico) ids.push({ id: p.cliente_servico.id_cliente_servico, ativo: true });
+    }
+  }
+  if (!ids.length) return null;
+  const alvo = ids.find((x) => x.ativo) || ids[0];
+  return porServico(c, alvo.id);
+}
+
+// Pelo MAC WAN: 1º login RADIUS no formato do IPoE (0cef-1507-d70b), 2º campo MAC da autenticação
+async function buscarMac(c, mac) {
+  const h = normMac(mac);
+  if (h.length !== 12) return null;
+  const login = h.match(/.{4}/g).join("-");
+  let r = escolher(await clientes(c, "login_radius", login), (s) => String(s.login || "").toLowerCase() === login);
+  if (r) return r;
+  const comDois = h.match(/.{2}/g).join(":").toUpperCase();
+  return escolher(await clientes(c, "mac", comDois), (s) => normMac(s.mac_addr) === h || normMac(s.phy_addr) === h);
+}
+
+// Wi-Fi guardado na "Documentação de Senhas" do serviço: descrição com "Wi-Fi"/"SSID"/"Wireless",
+// usuário = nome da rede, senha = senha da rede; "5G" na descrição = rede de 5 GHz
+async function wifi(c, idServico) {
+  const j = await get(c, `${API}/cliente/cliente_servico/${q(idServico)}/senhas`);
+  const out = {};
+  for (const s of (j && j.cliente_servico_senha) || []) {
+    const d = String(s.descricao || "");
+    if (!/wi-?fi|ssid|wireless|wlan/i.test(d) || !s.usuario || !s.senha) continue;
+    if (/5\s*g/i.test(d)) { if (!out.wifi_ssid_5) { out.wifi_ssid_5 = s.usuario; out.wifi_password_5 = s.senha; } }
+    else if (!out.wifi_ssid) { out.wifi_ssid = s.usuario; out.wifi_password = s.senha; }
+  }
+  return out;
+}
+
+// Adapta async -> callback do GenieACS; erro vira valor { error } (não gera fault)
+function ext(fn) {
+  return (args, callback) => {
+    Promise.resolve().then(() => fn(exigirConf(), args || []))
+      .then((v) => callback(null, v === undefined ? null : v))
+      .catch((e) => callback(null, { error: e.message }));
+  };
+}
+
+// ext("sistema", "contratoPorSerial", serial[, "wifi"])
+exports.contratoPorSerial = ext(async (c, args) => {
+  const serial = String(args[0] || "").trim();
+  if (!serial) return null;
+  const r = await buscarSerial(c, serial);
+  if (r && !r.cancelado && args[1] === "wifi") Object.assign(r, await wifi(c, r.contrato));
+  return r;
+});
+
+// ext("sistema", "pppoeLoginByMac", mac)
+exports.pppoeLoginByMac = ext(async (c, args) => buscarMac(c, args[0]));
+
+// Para a limpeza automática: situação de um serviço pelo id
+exports.statusServico = async (idServico) => {
+  const c = exigirConf();
+  const lista = await clientes(c, "id_cliente_servico", idServico);
+  for (const cli of lista) for (const s of cli.servicos || []) {
+    if (String(s.id_cliente_servico) === String(idServico)) {
+      return { status: s.status || s.status_prefixo || "", cancelado: cancelado(s), campos: { status: s.status, status_prefixo: s.status_prefixo } };
+    }
+  }
+  return { erro: `serviço ${idServico} não encontrado no Hubsoft` };
+};
+
+// Teste de conexão (instalador): node hubsoft --testar
+if (require.main === module && process.argv.includes("--testar")) {
+  (async () => {
+    const c = exigirConf();
+    await token(c, true);
+    console.log("Hubsoft: login da API OK");
+    const termo = process.argv[process.argv.indexOf("--testar") + 1];
+    if (termo && !termo.startsWith("--")) {
+      const r = /^[0-9a-f:.-]{12,17}$/i.test(termo) && normMac(termo).length === 12 ? await buscarMac(c, termo) : await buscarSerial(c, termo);
+      console.log(JSON.stringify(r));
+    }
+  })().catch((e) => { console.error(e.message); process.exit(1); });
+}

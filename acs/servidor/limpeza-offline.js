@@ -13,7 +13,8 @@
 //   opções: --dias 7   --max 10 (para tudo se for remover mais que isso numa execução)
 //
 // Antes de remover, guarda o documento completo do equipamento em BACKUP_DIR/<data>/<id>.json.
-// Credenciais do SGP: /opt/genieacs/sgp.env (SGP_HOST, SGP_APP, SGP_TOKEN), as mesmas da extensão "sistema".
+// Credenciais: /opt/genieacs/sgp.env, as mesmas da extensão "sistema" (SGP_* ou, com SISTEMA=hubsoft, HUBSOFT_*).
+// No Hubsoft, "contrato" é o serviço do cliente (id_cliente_servico) e cancelado = status "cancelado".
 
 const fs = require("fs");
 const path = require("path");
@@ -94,16 +95,28 @@ async function statusContrato(sgp, contrato) {
   log(`${new Date().toISOString()} limpeza-offline: ${APPLY ? "REMOVENDO" : "SIMULAÇÃO (nada será removido)"}; offline há ${DIAS}+ dias; máximo ${MAX}`);
 
   const env = readEnv(SGP_ENV);
-  // Sem SGP_HOST no sgp.env: usa o mesmo endereço da extensão "sistema" instalada
-  let host = env.SGP_HOST;
-  if (!host) {
-    try {
-      const m = fs.readFileSync(process.env.SGP_EXT_FILE || "/opt/genieacs/ext/sistema", "utf8").match(/const HOST = "([^"]+)"/);
-      if (m) host = m[1];
-    } catch {}
+  let consultar;
+  if (String(env.SISTEMA || "sgp").toLowerCase() === "hubsoft") {
+    // Hubsoft: a tag SGP_CONTRATO_<id> guarda o id_cliente_servico; usa o mesmo código da extensão.
+    // Sem arquivo de token (esta tarefa roda como root e o arquivo é do usuário genieacs).
+    process.env.HUBSOFT_TOKEN_FILE = "";
+    const hs = require(path.join(process.env.GENIEACS_EXT_DIR || "/opt/genieacs/ext", "hubsoft"));
+    consultar = async (contrato) => {
+      try { return await hs.statusServico(contrato); } catch (e) { return { erro: e.message }; }
+    };
+  } else {
+    // Sem SGP_HOST no sgp.env: usa o mesmo endereço da extensão "sistema" instalada
+    let host = env.SGP_HOST;
+    if (!host) {
+      try {
+        const m = fs.readFileSync(process.env.SGP_EXT_FILE || "/opt/genieacs/ext/sistema", "utf8").match(/const HOST = "([^"]+)"/);
+        if (m) host = m[1];
+      } catch {}
+    }
+    const sgp = { host, app: env.SGP_APP, token: env.SGP_TOKEN };
+    if (!sgp.host || !sgp.app || !sgp.token) throw new Error(`credenciais do SGP ausentes em ${SGP_ENV}`);
+    consultar = (contrato) => statusContrato(sgp, contrato);
   }
-  const sgp = { host, app: env.SGP_APP, token: env.SGP_TOKEN };
-  if (!sgp.host || !sgp.app || !sgp.token) throw new Error(`credenciais do SGP ausentes em ${SGP_ENV}`);
 
   const limite = new Date(Date.now() - DIAS * 86400000).toISOString();
   const q = encodeURIComponent(JSON.stringify({ _lastInform: { $lt: limite } }));
@@ -121,7 +134,7 @@ async function statusContrato(sgp, contrato) {
     if (tags.includes("SEM_LIMPEZA")) { log(`MANTER   ${pre}: tag SEM_LIMPEZA`); continue; }
     if (!contrato) { log(`REMOVER  ${pre}: não vinculado ao SGP`); remover.push({ id: d._id, motivo: "não vinculado" }); continue; }
 
-    const s = await statusContrato(sgp, contrato);
+    const s = await consultar(contrato);
     if (s.erro) { log(`MANTER   ${pre}: contrato ${contrato}: ${s.erro}`); continue; }
     const detalhe = `contrato ${contrato} "${s.status}" ${JSON.stringify(s.campos)}`;
     if (s.cancelado) { log(`REMOVER  ${pre}: ${detalhe}`); remover.push({ id: d._id, motivo: `contrato ${contrato} cancelado` }); }

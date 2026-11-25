@@ -6,6 +6,7 @@ const devices = require("./devices");
 const lan = require("./lan");
 const speedtest = require("./speedtest");
 const firmware = require("./firmware");
+const SIS = require("./env").SISTEMA_NOME;
 
 const H = 3600000;
 const ago = (iso) => (iso ? Date.now() - Date.parse(iso) : Infinity);
@@ -79,9 +80,9 @@ function diagnosticar(doc, faults, eventos = [], onu = null) {
     if (fi >= 2) add("atencao", "Fibra", `OLT registrou ${fi} quedas por perda de sinal (LOS) em 7 dias`, "Fibra/conector instável: verifique a drop, o conector e a caixa de atendimento.");
   }
 
-  // 4. Provisionamento e SGP
-  if (d.tags.includes("ERRO_SGP")) add("problema", "SGP", "Não encontrado no SGP", "O ACS não achou contrato para o serial/MAC deste equipamento. Confira o cadastro do serviço no SGP (serial e MAC).");
-  if (!d.tags.includes("Provisioned")) add("problema", "Provisionamento", "Equipamento não provisionado", "A configuração automática (IPoE/Wi-Fi) não terminou. Pode usar \"Reprovisionar\" depois de conferir o SGP.");
+  // 4. Provisionamento e sistema de gestão (SGP/Hubsoft; a tag continua ERRO_SGP)
+  if (d.tags.includes("ERRO_SGP")) add("problema", SIS, `Não encontrado no ${SIS}`, `O ACS não achou contrato para o serial/MAC deste equipamento. Confira o cadastro do serviço no ${SIS} (serial e MAC).`);
+  if (!d.tags.includes("Provisioned")) add("problema", "Provisionamento", "Equipamento não provisionado", `A configuração automática (IPoE/Wi-Fi) não terminou. Pode usar "Reprovisionar" depois de conferir o ${SIS}.`);
   if (d.tags.includes("BOOTSTRAP_PENDING") && ago(doc._lastBootstrap) > 2 * H) {
     add("atencao", "Provisionamento", "Pós-reset pendente há mais de 2 h", "O equipamento passou por reset/bootstrap e o ciclo de restauração ainda não terminou.");
   }
@@ -99,7 +100,7 @@ function diagnosticar(doc, faults, eventos = [], onu = null) {
     if (f.code === "cwmp.9805" && /^0\.2\.0 /.test(d.software)) extra = " No firmware 0.2.0 isso costuma acontecer depois de reinícios (o roteador renumera interfaces). Atualizar para 0.6.0 resolve.";
     else if (f.code === "preset_loop") {
       extra = " As configurações automáticas ficaram repetindo sem parar e o ACS desistiu.";
-      if (d.tags.includes("ERRO_SGP") || !d.tags.includes("Provisioned")) extra += " Causa provável: o provisionamento não termina porque o equipamento não está no SGP. Corrija o cadastro e use \"Reprovisionar\".";
+      if (d.tags.includes("ERRO_SGP") || !d.tags.includes("Provisioned")) extra += " Causa provável: o provisionamento não termina porque o equipamento não está no " + SIS + ". Corrija o cadastro e use \"Reprovisionar\".";
     }
     add("atencao", "ACS", `Falha no ACS: ${f.code} (${f.canais.join(", ")})`, `${f.message || ""}.${extra}`);
   }

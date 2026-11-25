@@ -19,6 +19,10 @@ module.exports = {
   NBI_URL: (process.env.NBI_URL || "http://127.0.0.1:7557").replace(/\/+$/, ""),
   // Endereço do SGP (vazio = sem link): o código do cliente na página do dispositivo abre <SGP_URL>/admin/cliente/<id>/contratos/
   SGP_URL: (process.env.SGP_URL || "").replace(/\/+$/, ""),
+  // Sistema de gestão de clientes mostrado no portal ("SGP", "Hubsoft"...)
+  SISTEMA_NOME: process.env.SISTEMA_NOME || "SGP",
+  // Link para abrir o cliente no sistema, com {id} no lugar do código (vazio = usa SGP_URL no formato do SGP)
+  CLIENTE_URL: process.env.CLIENTE_URL || "",
   ONLINE_MINUTES: Number(process.env.ONLINE_MINUTES || 6),
   SESSION_HOURS: Number(process.env.SESSION_HOURS || 12),
   COOKIE_SECURE: process.env.COOKIE_SECURE === "1",

@@ -35,7 +35,11 @@ function countBy(list, key) {
   return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, count]) => ({ label, count }));
 }
 
-api.get("/api/me", (req, res) => res.json({ ...req.user, sgpUrl: env.SGP_URL }));
+api.get("/api/me", (req, res) => res.json({
+  ...req.user,
+  sistema: env.SISTEMA_NOME,
+  clienteUrl: env.CLIENTE_URL || (env.SGP_URL ? `${env.SGP_URL}/admin/cliente/{id}/contratos/` : ""),
+}));
 
 api.get("/api/summary", async (req, res) => {
   const [list, faults] = await Promise.all([devices.all(), nbi.faults()]);
