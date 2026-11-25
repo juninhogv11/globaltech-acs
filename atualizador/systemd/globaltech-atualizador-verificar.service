@@ -1,0 +1,9 @@
+[Unit]
+Description=Globaltech ACS: consulta versões novas no GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/globaltech-atualizador/atualizador.sh verificar
+TimeoutStartSec=300

@@ -116,6 +116,20 @@ function tr181(doc) {
   return { radios, clients, hosts, ports, neighbors, readAt: newest(stamps) };
 }
 
+// Faixa de uma WLANConfiguration (TR-098): X_TP_Band; senão o padrão ("ac,n,a" = 5 GHz, "b,g,n" = 2.4 GHz)
+// ou os canais possíveis; o nome da rede por último (muda quando o cliente renomeia)
+function bandaTr098(w) {
+  const porBand = bandOf(v(w, "X_TP_Band"));
+  if (porBand) return porBand;
+  const std = String(v(w, "Standard") || "").toLowerCase().split(/[,\s/]+/);
+  if (std.some((x) => x === "b" || x === "g")) return "2.4GHz";
+  if (std.some((x) => x === "a" || x === "ac" || x === "ax")) return "5GHz";
+  const pc = String(v(w, "PossibleChannels") || "");
+  if (/\b(36|149)\b/.test(pc)) return "5GHz";
+  if (/^1\b/.test(pc)) return "2.4GHz";
+  return bandOf(v(w, "SSID")) || "2.4GHz";
+}
+
 function tr098(doc) {
   const stamps = [];
   const base = "InternetGatewayDevice.LANDevice.1";
@@ -123,8 +137,9 @@ function tr098(doc) {
   const clients = [];
   for (const [i, w] of children(doc, `${base}.WLANConfiguration`)) {
     const ssid = v(w, "SSID") || "";
-    const band = bandOf(v(w, "X_TP_Band")) || bandOf(ssid) || (/ac|ax/.test(String(v(w, "Standard") || "")) ? "5GHz" : "2.4GHz");
-    const channel = num(v(w, "Channel"));
+    const band = bandaTr098(w);
+    // Canal 0 = automático em alguns modelos (Realtek): o canal em uso vem em ChannelsInUse
+    const channel = num(v(w, "Channel")) || num(String(v(w, "ChannelsInUse") || "").split(",")[0]) || num(v(w, "Channel"));
     stamps.push(ts(w, "Channel"));
     if (channel !== null && !radios.some((r) => r.band === band)) {
       radios.push({
@@ -249,6 +264,8 @@ function lanInfo(doc) {
     c.ip = c.ip || h.ip || "";
   }
   info.interference = info.neighbors.results.length ? analyze(info.radios, info.neighbors.results) : [];
+  // "Alterar Wi-Fi" aparece quando há rede principal com lugar para gravar a senha
+  info.wifiEditavel = Object.values(wifiPrimary(doc)).some((p) => p.apPath);
   return info;
 }
 
@@ -281,10 +298,30 @@ function channelChange(doc, radioRef, channel) {
   };
 }
 
-// Rede principal de cada faixa (TR-181): o SSID de menor índice ligado a cada rádio
-// e o AccessPoint que aponta para ele (onde fica a senha)
+// Rede principal de cada faixa: { ssidPath, ssid, apPath, passParams (onde gravar a senha) }
+//   TR-181: o SSID de menor índice ligado a cada rádio e o AccessPoint que aponta para ele (onde fica a senha)
+//   TR-098: a WLANConfiguration ligada de menor índice de cada faixa (ex.: Realtek FW323DAC: 1 = 5G, 5 = 2.4G);
+//           senha em PreSharedKey.1.KeyPassphrase (padrão) e KeyPassphrase, os que existirem e forem graváveis
 function wifiPrimary(doc) {
-  if (!doc.Device) return {};
+  if (!doc.Device) {
+    const base = "InternetGatewayDevice.LANDevice.1.WLANConfiguration";
+    const prim = {};
+    for (const [i, w] of children(doc, base)) {
+      if (v(w, "SSID") === undefined) continue;
+      const band = bandaTr098(w);
+      const ligada = v(w, "Enable") !== false;
+      const atual = prim[band];
+      if (atual && (atual.ligada || !ligada)) continue; // já tem uma ligada de índice menor
+      const pre = `${base}.${i}.`;
+      const pode = (o, k) => o && o[k] && o[k]._writable !== false;
+      const passParams = [];
+      if (pode(get(w, "PreSharedKey.1"), "KeyPassphrase")) passParams.push(pre + "PreSharedKey.1.KeyPassphrase");
+      if (pode(w, "KeyPassphrase")) passParams.push(pre + "KeyPassphrase");
+      if (pode(w, "X_TP_PreSharedKey")) passParams.push(pre + "X_TP_PreSharedKey"); // roteadores TP-Link TR-098
+      prim[band] = { idx: i, ligada, ssidPath: pre, ssid: v(w, "SSID") || "", apPath: passParams.length ? pre : undefined, passParams };
+    }
+    return prim;
+  }
   const dot = (s) => { s = String(s || ""); return s && !s.endsWith(".") ? s + "." : s; };
   const radioBand = new Map(children(doc, "Device.WiFi.Radio").map(([i, r]) => [`Device.WiFi.Radio.${i}.`, v(r, "OperatingFrequencyBand")]));
   const prim = {};
@@ -295,7 +332,7 @@ function wifiPrimary(doc) {
   }
   for (const [i, ap] of children(doc, "Device.WiFi.AccessPoint")) {
     const ref = dot(v(ap, "SSIDReference"));
-    for (const b of Object.keys(prim)) if (prim[b].ssidPath === ref) prim[b].apPath = `Device.WiFi.AccessPoint.${i}.`;
+    for (const b of Object.keys(prim)) if (prim[b].ssidPath === ref) { prim[b].apPath = `Device.WiFi.AccessPoint.${i}.`; prim[b].passParams = [`Device.WiFi.AccessPoint.${i}.Security.KeyPassphrase`]; }
   }
   return prim;
 }

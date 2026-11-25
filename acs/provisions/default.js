@@ -52,6 +52,9 @@ if (isIGD) {
   declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANIPConnection.*.ExternalIPAddress", {path: every_ten_minutes, value: every_ten_minutes});
   declare("InternetGatewayDevice.LANDevice.*.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress", {path: hourly, value: hourly});
   declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID", {path: hourly, value: hourly});
+  // Sinal óptico GPON das ONUs padrão China Telecom (ex.: Realtek FW323DAC), em décimos de µW, para o portal
+  declare("InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.RXPower", {path: hourly, value: every_ten_minutes});
+  declare("InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.TXPower", {path: hourly, value: every_ten_minutes});
   declare("InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.X_TP_PreSharedKey", {path: every_ten_minutes, value: 1});
   declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.HostName", {path: every_ten_minutes, value: every_ten_minutes});
   declare("InternetGatewayDevice.LANDevice.*.Hosts.Host.*.IPAddress", {path: every_ten_minutes, value: every_ten_minutes});

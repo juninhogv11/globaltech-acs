@@ -27,4 +27,13 @@ module.exports = {
   SESSION_HOURS: Number(process.env.SESSION_HOURS || 12),
   COOKIE_SECURE: process.env.COOKIE_SECURE === "1",
   USERS_FILE: process.env.USERS_FILE || path.join(__dirname, "..", "data", "users.json"),
+  // Modo verificação (atualizador): sobe a versão nova numa porta de teste, sem rotinas de fundo
+  // (coleta das OLTs, acompanhamento de firmware) e sem gravar sessões — só para conferir que ela liga.
+  VERIFICAR: process.env.PORTAL_VERIFICAR === "1",
+  // Versão instalada (arquivo VERSAO gravado pelo atualizador; "dev" se instalado à mão)
+  VERSAO: (() => { try { return fs.readFileSync(path.join(__dirname, "..", "VERSAO"), "utf8").trim() || "dev"; } catch { return "dev"; } })(),
+  // Arquivos do atualizador (estado lido pelo portal; pedido gravado pelo portal e executado como root)
+  ATUALIZADOR_DIR: process.env.ATUALIZADOR_DIR || "/var/lib/globaltech-atualizador",
+  // Quem pode mandar atualizar/voltar a versão pelo portal (usuários separados por vírgula)
+  ATUALIZAR_USUARIOS: (process.env.ATUALIZAR_USUARIOS || "admin").split(",").map((s) => s.trim()).filter(Boolean),
 };

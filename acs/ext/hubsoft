@@ -215,6 +215,19 @@ exports.contratoPorSerial = ext(async (c, args) => {
 // ext("sistema", "pppoeLoginByMac", mac)
 exports.pppoeLoginByMac = ext(async (c, args) => buscarMac(c, args[0]));
 
+// Wi-Fi da Documentação de Senhas pelo serviço (tag SGP_CONTRATO_ do equipamento) ou, sem ele, pelo MAC WAN.
+// Para aparelhos que o Hubsoft não conhece pelo serial (ex.: Realtek FW323DAC, achado só pelo MAC). Devolve
+// { contrato, wifi_ssid, wifi_password, wifi_ssid_5, wifi_password_5 } ou null.
+exports.wifiPorServico = ext(async (c, args) => {
+  let id = String(args[0] || "").trim();
+  if (!id && args[1]) {
+    const r = await buscarMac(c, args[1]);
+    if (r && !r.cancelado) id = String(r.contrato || "");
+  }
+  if (!/^\d+$/.test(id)) return null;
+  return { contrato: id, ...(await wifi(c, id)) };
+});
+
 // Para a limpeza automática: situação de um serviço pelo id
 exports.statusServico = async (idServico) => {
   const c = exigirConf();

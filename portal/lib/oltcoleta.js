@@ -3,6 +3,9 @@
 //   ZTE C610:   show gpon onu state + baseinfo por PON; histórico (10 últimas quedas) via detail-info
 //   V-SOL EPON: show onu status por porta (MAC, estado, última queda e motivo; relógio da OLT corrigido)
 //   Nokia ISAM: show equipment ont status pon + operational-data (down-reason)
+//   ZTE C220:   SNMP (árvore antiga 3902.1012) com Telnet de reserva (show gpon onu state, nomes "gpon-onu_1/2/1:1")
+//   FiberHome AN5516/AN6000: só SNMP (5875.800.3.10.1.1, tabela de ONUs autorizadas)
+//   Os 3 últimos foram feitos SEM OLT real (25/11/2026): ver HISTORICO.md o que falta conferir.
 // Guarda em data/olt-onus.json: estado atual de cada ONU e histórico de quedas (45 dias).
 const fs = require("fs");
 const path = require("path");
@@ -59,8 +62,9 @@ async function coletarZte(o) {
   }));
 }
 // Histórico de uma ONU ZTE (10 últimas quedas). O relógio da C610 está em UTC ("show clock" -> "15:06:43 UTC").
-async function historicoZte(o, index) {
-  const r = await olts.lerComandos(o.id, [`show gpon onu detail-info gpon_onu-${index}`]);
+// C220/C300 usa "gpon-onu_" no lugar de "gpon_onu-"; formato da tabela de quedas igual (a confirmar no C220).
+async function historicoZte(o, index, tipo = "zte") {
+  const r = await olts.lerComandos(o.id, [`show gpon onu detail-info ${tipo === "zte_c220" ? "gpon-onu_" : "gpon_onu-"}${index}`]);
   const out = [];
   for (const l of r.saidas[0].saida.split("\n")) {
     const m = l.trim().match(/^\d+\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+(\S+)/);
@@ -223,6 +227,105 @@ async function coletarNokiaSnmp(o) {
   });
 }
 
+// ---------- ZTE C220 (geração antiga: MIB 3902.1012, CLI "gpon-olt_1/2/1") ----------
+// Levantado em documentação/fóruns (C300/C320 v1.x, mesma árvore do C220), SEM OLT real. A confirmar:
+//   serial 3902.1012.3.28.1.1.5 (8 bytes "ZTEG"+4 bytes, como no C610) e fase 3902.1012.3.28.2.1.4
+//   (mesma numeração do C610: 1 logging, 2 LOS, 3 syncMib, 4 working, 5 DyingGasp, 6 authFailed, 7 OffLine);
+//   índice .<ifIndex PON>.<id ONU>, ifIndex = 0x1 tipo | rack 4 bits | shelf 8 | slot 8 | porta 8 (porta começa em 0).
+//   RX na ONU 3902.1012.3.50.12.1.1.10.<ifIndex>.<id>.1: dBm = valor × 0,002 − 30 (65535 = sem leitura).
+const C220_OID = { sn: "1.3.6.1.4.1.3902.1012.3.28.1.1.5", fase: "1.3.6.1.4.1.3902.1012.3.28.2.1.4" };
+const C220_RX = "1.3.6.1.4.1.3902.1012.3.50.12.1.1.10";
+const c220Pon = (x) => `${(x >>> 16) & 0xff}/${(x >>> 8) & 0xff}/${(x & 0xff) + 1}`;
+async function coletarZteC220Snmp(o) {
+  const t = await olts.snmpColunas(o.id, Object.values(C220_OID));
+  const por = {};
+  for (const [nome, oid] of Object.entries(C220_OID)) for (const vb of t[oid]) {
+    const p = vb.oid.slice(oid.length + 1).split(".");
+    if (p.length < 2) continue;
+    const pon = Number(p[0]), id = p[1];
+    const index = `${c220Pon(pon)}:${id}`;
+    (por[index] = por[index] || { index, ref: `${pon}.${id}` })[nome] = vb.value;
+  }
+  return Object.values(por).filter((x) => x.fase !== undefined).map((x) => {
+    const estado = ZTE_FASE[x.fase] || `fase ${x.fase}`;
+    const online = Number(x.fase) === 4;
+    let sn = snDeHex(x.sn);
+    if (!sn) sn = (load().onus[`${o.id}|${x.index}`] || {}).sn || "";
+    return { index: x.index, ref: x.ref, sn, online, estadoOlt: estado, causa: online ? null : causaDe(estado) || "outro" };
+  });
+}
+// Telnet (reserva): "show gpon onu state" (todas as PONs; se o firmware exigir a PON, lê a lista da configuração)
+//   gpon-onu_1/2/1:1   enable   enable   operation   working
+// e "show gpon onu baseinfo gpon-olt_1/2/1" (linha com "SN:ZTEG...", igual ao C610).
+const FASES_RE = /^(working|los|losi|dyinggasp|dying-gasp|offline|logging|syncmib|authfailed|lofi|lof)$/i;
+const ponsC220 = {};
+function lerEstadoC220(txt) {
+  const out = [];
+  for (const l of String(txt).split("\n")) {
+    const m = l.trim().match(/^(?:gpon-onu_)?(\d+\/\d+\/\d+):(\d+)\s+(.+)$/);
+    if (!m) continue;
+    const tk = m[3].trim().split(/\s+/);
+    const fase = tk.find((x) => FASES_RE.test(x)) || tk[tk.length - 1];
+    out.push({ index: `${m[1]}:${m[2]}`, pon: m[1], estadoOlt: fase });
+  }
+  return out;
+}
+async function coletarZteC220(o) {
+  let onus = lerEstadoC220((await olts.lerComandos(o.id, ["terminal length 0", "show gpon onu state"])).saidas[1].saida);
+  if (!onus.length) {
+    let pons = (ponsC220[o.id] && Date.now() - ponsC220[o.id].em < 86400000) ? ponsC220[o.id].pons : null;
+    if (!pons) {
+      const r0 = await olts.lerComandos(o.id, ["terminal length 0", "show running-config"]);
+      pons = [...new Set([...r0.saidas[1].saida.matchAll(/^\s*interface gpon-(?:olt|onu)_(\d+\/\d+\/\d+)/gm)].map((m) => m[1]))];
+      ponsC220[o.id] = { pons, em: Date.now() };
+    }
+    if (!pons.length) throw new Error("nenhuma PON GPON encontrada (show gpon onu state / show running-config)");
+    const r = await olts.lerComandos(o.id, ["terminal length 0", ...pons.map((p) => `show gpon onu state gpon-olt_${p}`)]);
+    onus = r.saidas.slice(1).flatMap((s) => lerEstadoC220(s.saida));
+  }
+  const pons = [...new Set(onus.map((x) => x.pon))];
+  const sn = {};
+  const r2 = await olts.lerComandos(o.id, ["terminal length 0", ...pons.map((p) => `show gpon onu baseinfo gpon-olt_${p}`)]);
+  for (const s of r2.saidas) for (const l of s.saida.split("\n")) {
+    const m = l.trim().match(/^gpon-onu_(\S+)\s+.*?SN:(\S+)/);
+    if (m) sn[m[1]] = normSn(m[2]);
+  }
+  return onus.map((x) => {
+    const online = /^working$/i.test(x.estadoOlt);
+    return { index: x.index, sn: sn[x.index] || "", online, estadoOlt: x.estadoOlt, causa: online ? null : causaDe(x.estadoOlt) || "outro" };
+  });
+}
+
+// ---------- FiberHome AN5516 / AN6000 (MIB própria, enterprise 5875) ----------
+// Levantado na biblioteca snmp-fiberhome (testada em AN5516-01/06) e em fóruns, SEM OLT real. A confirmar:
+//   tabela de ONUs autorizadas 5875.800.3.10.1.1: .10 serial GPON (texto "FHTT1234abcd") ou MAC (EPON), .11 estado;
+//   AN5516: 0 = fibra cortada (LOS), 1 = online, 2 = sem energia (dying gasp), 3 = offline. AN6000: assume a mesma numeração.
+//   índice da ONU = slot·2^25 + PON·2^19 + ONU·2^8  -> "slot/PON:ONU" (ex.: 11/1:5)
+//   RX na ONU 5875.800.3.9.3.3.1.6.<índice> em centésimos de dBm (a confirmar); temperatura 5875.800.3.9.4.5 (°C).
+// Sem Telnet de reserva: a CLI muda muito entre versões (AN5516 "cd gpononu"; AN6000 estilo Cisco) e não foi levantada.
+const FH_OID = { sn: "1.3.6.1.4.1.5875.800.3.10.1.1.10", estado: "1.3.6.1.4.1.5875.800.3.10.1.1.11" };
+const FH_RX = "1.3.6.1.4.1.5875.800.3.9.3.3.1.6";
+const FH_TEMP = "1.3.6.1.4.1.5875.800.3.9.4.5";
+const FH_ESTADO = { 0: ["LOS", "fibra"], 1: ["online", null], 2: ["PowerOff", "energia"], 3: ["offline", "outro"] };
+const fhIndex = (x) => `${x >>> 25}/${(x >>> 19) & 0x3f}:${(x >>> 8) & 0x7ff}`;
+async function coletarFhSnmp(o) {
+  const t = await olts.snmpColunas(o.id, Object.values(FH_OID));
+  const por = {};
+  for (const [nome, oid] of Object.entries(FH_OID)) for (const vb of t[oid]) {
+    const ifx = Number(vb.oid.slice(oid.length + 1));
+    if (!ifx) continue;
+    (por[ifx] = por[ifx] || { ifx })[nome] = vb.value;
+  }
+  return Object.values(por).filter((x) => x.estado !== undefined).map((x) => {
+    const [estado, causa] = FH_ESTADO[x.estado] || [`estado ${x.estado}`, "outro"];
+    const online = Number(x.estado) === 1;
+    // EPON devolve o MAC da ONU; GPON o serial (texto ou 8 bytes)
+    const bruto = String(x.sn || "").trim();
+    const mac = /^([0-9a-f]{2}[:\-.]?){5}[0-9a-f]{2}$/i.test(bruto) ? normMac(bruto) : "";
+    return { index: fhIndex(x.ifx), ref: x.ifx, sn: mac ? "" : snDeHex(bruto), mac, online, estadoOlt: estado, causa: online ? null : causa };
+  });
+}
+
 // ---------- Sinal e tráfego das ONUs ligadas a aparelhos do ACS ----------
 // Guardado em data/olt-series.json: um ponto por coleta (10 min), 7 dias.
 //   ZTE (SNMP):  RX na OLT 500.1.2.4.2.1.2 (milésimos de dBm; -80000 = sem sinal);
@@ -256,6 +359,16 @@ async function medirSnmp(o, onus, vinc) {
   } else if (o.tipo === "nokia") {
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `1.3.6.1.4.1.637.61.1.35.10.18.1.2.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
     for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: rx > -500 && rx < 100 ? rx / 10 : null, lado: "olt" }; }
+  } else if (o.tipo === "zte_c220") {
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `${C220_RX}.${x.ref}.1`))) v[vb.oid] = vb.value;
+    for (const x of alvo) {
+      const bruto = v[`${C220_RX}.${x.ref}.1`];
+      const rx = typeof bruto === "number" && bruto !== 65535 ? Math.round((bruto * 0.002 - 30) * 100) / 100 : null;
+      x.medida = { rx: rx != null && rx > -50 && rx < 10 ? rx : null, lado: "onu" };
+    }
+  } else if (o.tipo === "fh_an5516" || o.tipo === "fh_an6000") {
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `${FH_RX}.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
+    for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: Number.isFinite(rx) && rx > -5000 && rx < 1000 && rx !== 0 ? rx / 100 : null, lado: "onu" }; }
   }
 }
 function registrarSerie(key, agora, x) {
@@ -391,6 +504,41 @@ async function statusVsol(o) {
   }
   return out;
 }
+// ZTE C220 e FiberHome: limites não conferidos na OLT -> mesmos valores conservadores da V-SOL
+const nivelTemp = (t) => (t >= VSOL_TEMP.bad ? "bad" : t >= VSOL_TEMP.warn ? "warn" : "ok");
+// Temperaturas soltas num texto da CLI: linhas com "temp" e um número de 0 a 120 (ex.: "Temperature : 45 C")
+function tempsDeTexto(txt) {
+  const out = [];
+  for (const l of String(txt).split("\n")) {
+    if (!/temp/i.test(l) || /threshold|limit|alarm/i.test(l)) continue;
+    const m = l.match(/temp\w*[^\d\-]*(-?\d+(?:\.\d+)?)/i);
+    if (m && +m[1] > 0 && +m[1] < 120) out.push({ nome: l.trim().split(/\s{2,}|:/)[0].slice(0, 30), temp: +m[1] });
+  }
+  return out;
+}
+// C220: placa de controle (SNMP 3902.1015.2.1.3.2, a confirmar) ou CLI "show environment"
+async function statusZteC220(o) {
+  const out = { nivel: "ok", pontos: [] };
+  if (o.temCommunity) {
+    try {
+      const t = await olts.snmpColunas(o.id, ["1.3.6.1.4.1.3902.1015.2.1.3.2"], 50);
+      for (const vb of t["1.3.6.1.4.1.3902.1015.2.1.3.2"]) if (typeof vb.value === "number" && vb.value > 0 && vb.value < 120) out.pontos.push({ nome: `placa ${ultimo(vb.oid).pop()}`, temp: vb.value });
+    } catch {}
+  }
+  if (!out.pontos.length) {
+    try { out.pontos = tempsDeTexto((await olts.lerComandos(o.id, ["show environment"])).saidas[0].saida); } catch {}
+  }
+  if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
+  return out;
+}
+// FiberHome: temperatura do equipamento (SNMP 5875.800.3.9.4.5, °C inteiro, a confirmar)
+async function statusFh(o) {
+  const t = await olts.snmpColunas(o.id, [FH_TEMP], 50);
+  const out = { nivel: "ok", pontos: [] };
+  for (const vb of t[FH_TEMP]) if (typeof vb.value === "number" && vb.value > 0 && vb.value < 120) out.pontos.push({ nome: `sensor ${vb.oid.slice(FH_TEMP.length + 1) || 0}`, temp: vb.value });
+  if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
+  return out;
+}
 async function lerStatus(o, c) {
   const agora = new Date().toISOString();
   try {
@@ -398,6 +546,8 @@ async function lerStatus(o, c) {
     if (o.tipo === "zte") s = await statusZte(o, c.ligadoSeg == null);
     else if (o.tipo === "nokia" && o.temCommunity) s = await statusNokia(o);
     else if (o.tipo === "vsol") s = await statusVsol(o);
+    else if (o.tipo === "zte_c220") s = await statusZteC220(o);
+    else if ((o.tipo === "fh_an5516" || o.tipo === "fh_an6000") && o.temCommunity) s = await statusFh(o);
     else return;
     // Tempo ligada lido pelo SNMP na coleta vale quando a leitura própria não trouxe
     if (s.ligadoSeg == null && c.ligadoSeg != null) s.ligadoSeg = c.ligadoSeg;
@@ -407,6 +557,11 @@ async function lerStatus(o, c) {
     db.status[o.id] = { ...(db.status[o.id] || {}), erro: e.message, erroEm: agora };
   }
 }
+
+// Leitura por SNMP de cada tipo (os outros só por Telnet)
+const COLETA_SNMP = { zte: coletarZteSnmp, nokia: coletarNokiaSnmp, zte_c220: coletarZteC220Snmp, fh_an5516: coletarFhSnmp, fh_an6000: coletarFhSnmp };
+// Quem informa tráfego por ONU (gráfico da página do dispositivo)
+const COM_TRAFEGO = new Set(["zte", "vsol"]);
 
 // Quem fornece a lista de aparelhos do ACS (definido em iniciar); usado para saber quais ONUs medir
 let aparelhosFn = null;
@@ -436,10 +591,10 @@ async function coletar(forcar = false) {
       try {
         let onus, extra = {};
         const t0 = Date.now();
-        if ((o.tipo === "zte" || o.tipo === "nokia") && o.temCommunity) {
+        if (COLETA_SNMP[o.tipo] && o.temCommunity) {
           // SNMP primeiro; se a OLT não responder, cai para o Telnet
           try {
-            onus = o.tipo === "zte" ? await coletarZteSnmp(o) : await coletarNokiaSnmp(o);
+            onus = await COLETA_SNMP[o.tipo](o);
             if (!onus.length) throw new Error("tabela SNMP vazia");
             extra.via = "snmp";
           } catch (e) { extra.snmpErro = e.message; onus = null; }
@@ -448,6 +603,8 @@ async function coletar(forcar = false) {
           if (o.tipo === "zte") onus = await coletarZte(o);
           else if (o.tipo === "vsol") ({ onus, ...extra } = await coletarVsol(o, vinc));
           else if (o.tipo === "nokia") onus = await coletarNokia(o);
+          else if (o.tipo === "zte_c220") onus = await coletarZteC220(o);
+          else if (o.tipo === "fh_an5516" || o.tipo === "fh_an6000") throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a FiberHome é lida só por SNMP` : "a FiberHome é lida só por SNMP: cadastre a community");
           else continue;
           extra.via = "telnet";
         }
@@ -504,6 +661,14 @@ function acharOnu(device) {
   const serial = normSn(device.serial);
   const candidatos = Object.entries(db.onus);
   for (const [k, x] of candidatos) if (x.sn && (x.sn === serial || (mac.length === 12 && x.sn === "TPLG" + mac.slice(4).toUpperCase()))) return { key: k, ...x };
+  // Realtek (ex.: FW323DAC): serial TR-069 "12345006D61AAAFE0" e serial GPON "GPON00AAAFE0" -> a parte hexa do
+  // serial GPON, sem os zeros à esquerda, é o fim do serial TR-069 (conferido 25/11/2026 pelo RX na OLT FiberHome)
+  if (serial.length >= 12) {
+    for (const [k, x] of candidatos) {
+      const hex = /^[A-Z]{4}[0-9A-F]{8}$/.test(x.sn) ? x.sn.slice(4).replace(/^0+/, "") : "";
+      if (hex.length >= 6 && serial.endsWith(hex)) return { key: k, ...x };
+    }
+  }
   if (mac.length === 12) {
     const base = parseInt(mac.slice(6), 16);
     for (const [k, x] of candidatos) {
@@ -521,10 +686,10 @@ async function onuDoAparelho(device, comHistoricoZte = false) {
   const onu = acharOnu(device);
   if (!onu) return null;
   const h = [...((load().historico[onu.key]) || [])];
-  if (comHistoricoZte && onu.oltTipo === "zte") {
+  if (comHistoricoZte && (onu.oltTipo === "zte" || onu.oltTipo === "zte_c220")) {
     let c = cacheZte.get(onu.key);
     if (!c || Date.now() - c.em > 600000) {
-      try { c = { em: Date.now(), lista: await historicoZte({ id: onu.olt }, onu.index) }; cacheZte.set(onu.key, c); } catch { c = null; }
+      try { c = { em: Date.now(), lista: await historicoZte({ id: onu.olt }, onu.index, onu.oltTipo) }; cacheZte.set(onu.key, c); } catch { c = null; }
     }
     for (const e of (c && c.lista) || []) if (!h.some((x) => Math.abs(Date.parse(x.caiu) - Date.parse(e.caiu)) < 120000)) h.push(e);
   }
@@ -564,10 +729,10 @@ function serieDoAparelho(device, horas = 24) {
   if (!onu) return { onu: null, pontos: [] };
   const s = loadS()[onu.key] || { pts: [] };
   const desde = new Date(Date.now() - Math.min(Math.max(Number(horas) || 24, 1), SERIE_DIAS * 24) * 3600000).toISOString();
-  const temTrafego = onu.oltTipo !== "nokia";
+  const temTrafego = COM_TRAFEGO.has(onu.oltTipo);
   return {
-    onu: { olt: onu.oltNome, tipo: onu.oltTipo, index: onu.index, online: onu.online, causa: onu.causa, visto: onu.visto },
-    lado: s.lado || (onu.oltTipo === "vsol" ? "onu" : "olt"), temTrafego, intervaloMin: INTERVALO_MIN,
+    onu: { olt: onu.oltNome, tipo: onu.oltTipo, tipoNome: olts.TIPOS[onu.oltTipo] || onu.oltTipo, index: onu.index, online: onu.online, causa: onu.causa, visto: onu.visto },
+    lado: s.lado || (["zte", "nokia"].includes(onu.oltTipo) ? "olt" : "onu"), temTrafego, intervaloMin: INTERVALO_MIN,
     pontos: s.pts.filter((p) => p[0] >= desde).map(([t, rx, down, up, st]) => ({ t, rx, down, up, st })),
   };
 }

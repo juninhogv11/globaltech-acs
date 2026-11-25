@@ -1,0 +1,7 @@
+[Unit]
+Description=Globaltech ACS: executa o pedido de atualização do portal
+
+[Service]
+Type=oneshot
+ExecStart=/opt/globaltech-atualizador/atualizador.sh pedido
+TimeoutStartSec=1800

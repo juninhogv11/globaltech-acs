@@ -482,3 +482,13 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .olt-legenda span { display: inline-flex; align-items: center; gap: 7px; }
 .olt-legenda i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .olt-legenda b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Atualizações */
+.atu-passos { margin: 0 0 8px; padding-left: 20px; font-size: 13px; line-height: 1.7; }
+.atu-log { max-height: 320px; overflow: auto; font-size: 11.5px; background: var(--bg); padding: 10px; border-radius: 8px; white-space: pre-wrap; }
+.atu-versao { padding: 12px 0; border-top: 1px solid var(--border); }
+.atu-versao:first-of-type { border-top: 0; }
+.atu-vhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.atu-notas { font-size: 13.5px; }
+.atu-notas p { margin: 4px 0; }
+.notas { margin: 4px 0; padding-left: 20px; line-height: 1.6; }

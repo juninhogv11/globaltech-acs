@@ -7,6 +7,9 @@
 //   node deploy-acs.js                      faz backup do servidor e publica
 //   node deploy-acs.js --only provisions    só um tipo (provisions | presets | virtual_parameters)
 //   node deploy-acs.js --install-ext        também copia as extensões para GENIEACS_EXT_DIR (rodar no servidor do ACS, como root)
+//   node deploy-acs.js --backup-dir <pasta> a cópia de segurança vai para <pasta>/<data> (padrão: acs/backups)
+//   node deploy-acs.js --restaurar <pasta>  volta provisions, presets e virtual parameters ao que está na cópia <pasta>
+//                                           (usado pelo atualizador quando uma atualização falha no meio)
 //
 // Requer Node.js 18+.
 
@@ -18,6 +21,9 @@ const args = process.argv.slice(2);
 const DRY = args.includes("--dry-run");
 const ONLY = args.includes("--only") ? args[args.indexOf("--only") + 1] : null;
 const INSTALL_EXT = args.includes("--install-ext");
+const arg = (k) => (args.includes(k) ? args[args.indexOf(k) + 1] : null);
+const BACKUP_DIR = arg("--backup-dir") || path.join(DIR, "backups");
+const RESTAURAR = arg("--restaurar");
 
 function loadEnv(file) {
   if (!fs.existsSync(file)) {
@@ -32,7 +38,8 @@ function loadEnv(file) {
   return env;
 }
 
-const env = loadEnv(path.join(DIR, "acs.env"));
+// Restaurar não precisa do acs.env: a cópia já tem as variáveis preenchidas (NBI_URL vem do ambiente ou o padrão)
+const env = RESTAURAR ? { NBI_URL: process.env.NBI_URL } : loadEnv(path.join(DIR, "acs.env"));
 const NBI = (env.NBI_URL || "http://127.0.0.1:7557").replace(/\/+$/, "");
 
 // Substitui {{VAR}}; para se faltar alguma variável (evita publicar provision com "{{CR_PASS}}")
@@ -70,13 +77,37 @@ function items(kind) {
   });
 }
 
+// Volta ao conteúdo de uma cópia de segurança: regrava só o que mudou (itens criados depois da cópia ficam)
+async function restaurar(bdir) {
+  let n = 0;
+  for (const k of ["provisions", "virtual_parameters", "presets"]) {
+    const f = path.join(bdir, `${k}.json`);
+    if (!fs.existsSync(f)) continue;
+    const atual = new Map(((await nbi("GET", `/${k}/`)) || []).map((x) => [x._id, x]));
+    for (const it of JSON.parse(fs.readFileSync(f, "utf8"))) {
+      const { _id, ...resto } = it;
+      const old = atual.get(_id);
+      const body = k === "presets" ? JSON.stringify(resto) : it.script;
+      const same = old && (k === "presets"
+        ? JSON.stringify(Object.fromEntries(Object.keys(resto).map((x) => [x, old[x]]))) === body
+        : old.script === it.script);
+      if (same) continue;
+      console.log(`restaurar  ${k}/${_id}`);
+      if (!DRY) await nbi("PUT", `/${k}/${encodeURIComponent(_id)}`, body, k === "presets" ? "application/json" : "text/plain; charset=utf-8");
+      n++;
+    }
+  }
+  console.log(n ? `${n} item(ns) ${DRY ? "seriam restaurados" : "restaurados"} de ${bdir}.` : "Nada a restaurar: o servidor já está igual à cópia.");
+}
+
 (async () => {
+  if (RESTAURAR) return restaurar(RESTAURAR);
   const kinds = ["provisions", "virtual_parameters", "presets"].filter((k) => !ONLY || ONLY === k);
   console.log(`NBI: ${NBI}${DRY ? "  (simulação, nada será gravado)" : ""}`);
 
   // Backup do que está no servidor antes de qualquer alteração
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const bdir = path.join(DIR, "backups", stamp);
+  const bdir = path.join(BACKUP_DIR, stamp);
   const current = {};
   for (const k of kinds) current[k] = await nbi("GET", `/${k}/`);
   if (!DRY) {

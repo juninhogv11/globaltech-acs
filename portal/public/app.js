@@ -477,7 +477,7 @@ function lanSection(lan, online) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><h2>Wi-Fi · ${lan.clients.length} cliente(s)</h2>
         <span class="muted">${lan.readAt ? "lido " + timeAgo(lan.readAt) : "ainda não lido"}
-          ${lan.radios.some((r) => r.ref) ? `<button class="btn sm" id="wifi-edit" ${off}>Alterar Wi-Fi</button>` : ""}
+          ${lan.wifiEditavel || lan.radios.some((r) => r.ref) ? `<button class="btn sm" id="wifi-edit" ${off}>Alterar Wi-Fi</button>` : ""}
           <button class="btn sm" data-act="read-lan" ${off}>Ler Wi-Fi e LAN agora</button></span></div>
       <form id="wifi-form" class="photo-form" style="margin-bottom:12px" hidden></form>
       <div style="margin-bottom:10px">${radios}</div>
@@ -1116,7 +1116,7 @@ async function loadSinal(id) {
       ${graficoSvg(pts, [{ key: "down", nome: "Download", cor: "#2f6fd6" }, { key: "up", nome: "Upload", cor: "#e8890c" }], { ini, fim, fmt: fmtBps, zero: true, passoMs })}
       <div class="graf-leg"><span><i style="background:#2f6fd6"></i>Download · atual <b>${fmtBps(ult("down"))}</b> · máximo ${fmtBps(maxDe("down"))}</span>
         <span><i style="background:#e8890c"></i>Upload · atual <b>${fmtBps(ult("up"))}</b> · máximo ${fmtBps(maxDe("up"))}</span></div></div>`
-    : `<div class="graf-box"><div class="graf-titulo">Tráfego</div><div class="graf-vazio">A OLT Nokia não informa o tráfego por ONU.</div></div>`;
+    : `<div class="graf-box"><div class="graf-titulo">Tráfego</div><div class="graf-vazio">A OLT ${esc(r.onu.tipoNome || "")} não informa o tráfego por ONU.</div></div>`;
   card.innerHTML = `
     <div class="card-head"><h2>Tráfego e sinal</h2><span class="muted">OLT ${esc(r.onu.olt)} · ONU <code>${esc(r.onu.index)}</code> · leitura a cada ${r.intervaloMin || 10} min</span>${periodo}</div>
     <div class="graf-grid">
@@ -1562,7 +1562,7 @@ async function pageOlts() {
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP, V-SOL por Telnet)</th><th></th></tr></thead>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP com Telnet de reserva, V-SOL por Telnet, FiberHome só por SNMP)</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
@@ -1617,7 +1617,8 @@ function oltForm(o, tipos) {
       <label>SNMP porta<input name="snmpPorta" type="number" min="1" max="65535" value="${v("snmpPorta", 161)}"></label>
     </div>
     <label>SNMP community<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
-    <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.</p>
+    <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.
+      FiberHome é lida só por SNMP (community obrigatória); ZTE C220 usa SNMP com Telnet de reserva.</p>
     <div class="fw-actions"><button class="btn" value="cancel" type="submit">Cancelar</button><button class="btn primary" value="ok" type="submit">Salvar</button></div>
   </form>`;
   document.body.appendChild(dlg);
@@ -1636,8 +1637,103 @@ function oltForm(o, tipos) {
   dlg.showModal();
 }
 
+// ---------- Atualizações do sistema (versões marcadas no GitHub; o atualizador instala como root) ----------
+// Texto simples das NOVIDADES: "- item" vira lista, **negrito**, `código`
+function notasHtml(t) {
+  const linhas = String(t || "").split("\n");
+  let html = "", lista = false;
+  for (const l of linhas) {
+    const item = l.match(/^\s*-\s+(.*)$/);
+    const fmt = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+    if (item) { if (!lista) { html += "<ul class=\"notas\">"; lista = true; } html += `<li>${fmt(item[1])}`; }
+    else if (lista && /^\s+\S/.test(l)) html += " " + fmt(l.trim());
+    else { if (lista) { html += "</ul>"; lista = false; } if (l.trim()) html += `<p>${fmt(l)}</p>`; }
+  }
+  return html + (lista ? "</ul>" : "");
+}
+const ATU_RESULT = { ok: ["good", "concluída"], erro: ["bad", "falhou, nada mudou"], revertido: ["warn", "falhou, foi desfeita"], rodando: ["warn", "em andamento"] };
+
+async function pageAtualizacoes() {
+  let versaoInicial = null;
+  const render = async () => {
+    let r;
+    try { r = await api("/atualizacao"); } catch (e) {
+      // O portal reinicia no meio da atualização: segue tentando
+      const st = $("#atu-status");
+      if (st) st.innerHTML = `<span class="badge warn">portal reiniciando…</span>`;
+      return;
+    }
+    if (versaoInicial === null) versaoInicial = r.versaoPortal;
+    // A versão do portal mudou: recarrega para pegar as telas novas
+    if (r.versaoPortal !== versaoInicial && !(r.execucao && r.execucao.estado === "rodando")) { location.reload(); return; }
+    const x = r.execucao;
+    const rodando = !!(x && x.estado === "rodando") || r.pedidoPendente;
+    const pode = r.podeAtualizar && r.instalado && !rodando;
+    const disp = r.disponiveis || [];
+    view.innerHTML = `
+      <div class="page-head"><h1>Atualizações</h1>
+        <span class="muted">versão instalada <b>${esc(r.versao)}</b>${r.canal === "teste" ? ` · <span class="badge warn">servidor de teste</span>` : ""}</span>
+        ${r.instalado ? `<button class="btn" id="atu-verificar" style="margin-left:auto" ${rodando ? "disabled" : ""}>Verificar agora</button>` : ""}</div>
+      ${!r.instalado ? `<div class="card"><div class="empty">O atualizador não está instalado neste servidor.<br>
+          No servidor, como root, dentro da pasta do projeto: <code>bash atualizador/instalar-atualizador.sh</code></div></div>` : `
+      <div class="card" style="margin-bottom:16px">
+        <p style="margin:0">O sistema é atualizado a partir das versões publicadas no GitHub. Antes de trocar, o servidor confere a versão nova
+          (o portal novo é ligado numa porta de teste e a publicação no ACS é simulada). Se algo falhar, volta sozinho para a versão em uso.
+          O portal reinicia em cerca de 1 segundo e ninguém é desconectado.</p>
+        <p class="muted" style="margin:8px 0 0">Partes neste servidor: ${[r.partes.portal ? "portal" : "", r.partes.acs ? "ACS (provisions, presets, extensões)" : ""].filter(Boolean).join(" + ") || "—"}
+          · última consulta ao GitHub ${r.verificadoEm ? timeAgo(r.verificadoEm) : "nunca"}
+          ${r.erroVerificacao ? `<br><span style="color:var(--bad)">${esc(r.erroVerificacao)}</span>` : ""}
+          ${!r.podeAtualizar ? `<br>Seu usuário pode ver esta página, mas não atualizar (ATUALIZAR_USUARIOS no .env do portal).` : ""}</p>
+      </div>
+      <div id="atu-status">${x ? `<div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h2>Última execução: ${esc(x.acao === "voltar" ? "voltar para" : x.acao === "aplicar" ? "atualizar para" : x.acao)} ${esc(x.versao || "")}</h2>
+          <span class="badge ${(ATU_RESULT[x.estado] || ["warn"])[0]}">${esc((ATU_RESULT[x.estado] || [x.estado])[1])}</span></div>
+        <p class="muted" style="margin:0 0 8px">de ${esc(x.de || "?")} · pedido por ${esc(x.usuario || "?")} · ${timeAgo(x.inicio)}${x.fim ? ` · terminou ${timeAgo(x.fim)}` : ""}${x.mensagem ? ` · ${esc(x.mensagem)}` : ""}</p>
+        <ol class="atu-passos">${(x.passos || []).map((p) => `<li>${esc(p.texto)} <span class="muted">${esc(fmtDate(p.em))}</span></li>`).join("")}</ol>
+        ${r.log ? `<details${x.estado === "erro" || x.estado === "revertido" ? " open" : ""}><summary>Registro completo</summary><pre class="atu-log">${esc(r.log)}</pre></details>` : ""}
+      </div>` : ""}${r.pedidoPendente && !(x && x.estado === "rodando") ? `<div class="card" style="margin-bottom:16px"><span class="badge warn">pedido enviado, aguardando o atualizador…</span></div>` : ""}</div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h2>Versões novas</h2></div>
+        ${disp.length ? disp.map((d) => `<div class="atu-versao">
+          <div class="atu-vhead"><b>${esc(d.versao)}</b> ${d.notas && d.notas.titulo ? `<span>— ${esc(d.notas.titulo)}</span>` : ""}
+            ${pode ? `<button class="btn sm primary" data-atu-aplicar="${esc(d.versao)}" style="margin-left:auto">Atualizar para ${esc(d.versao)}</button>` : ""}</div>
+          ${d.notas && d.notas.texto ? `<div class="atu-notas">${notasHtml(d.notas.texto)}</div>` : `<div class="muted">Sem notas para esta versão.</div>`}
+        </div>`).join("") : `<div class="empty">Nenhuma versão mais nova que a instalada.</div>`}
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Histórico</h2>
+          ${r.anterior && r.anterior !== "dev" && pode ? `<button class="btn sm danger" id="atu-voltar">Voltar para ${esc(r.anterior)}</button>` : ""}</div>
+        ${r.historico.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>O quê</th><th>Quem</th><th>Resultado</th></tr></thead><tbody>
+          ${r.historico.map((h) => `<tr><td>${esc(fmtDate(h.em))}</td><td>${esc(h.de || "?")} → <b>${esc(h.para || "")}</b>${h.acao === "voltar" ? " (volta)" : ""}</td>
+            <td>${esc(h.usuario || "")}</td><td><span class="badge ${(ATU_RESULT[h.resultado] || ["warn"])[0]}">${esc((ATU_RESULT[h.resultado] || [h.resultado])[1])}</span>
+            ${h.mensagem ? `<div class="muted" style="font-size:12px">${esc(h.mensagem)}</div>` : ""}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">Nenhuma atualização feita por aqui ainda.</div>`}
+      </div>`}`;
+    const pedir = async (path, body, msg) => {
+      try { await api(path, { method: "POST", body, loading: msg }); toast("Pedido enviado ao atualizador."); setTimeout(render, 1500); } catch (e) { toast(e.message, true); }
+    };
+    const bv = $("#atu-verificar");
+    if (bv) bv.addEventListener("click", () => pedir("/atualizacao/verificar", null, "Pedindo a consulta ao GitHub…"));
+    view.querySelectorAll("[data-atu-aplicar]").forEach((b) => b.addEventListener("click", () => {
+      const v = b.dataset.atuAplicar;
+      if (!confirm(`Atualizar o sistema para ${v}?\n\n• O servidor confere a versão nova antes de trocar.\n• O portal reinicia por ~1 segundo (ninguém é desconectado).\n• Se algo falhar, volta sozinho para ${r.versao}.`)) return;
+      pedir("/atualizacao/aplicar", { versao: v }, "Pedindo a atualização…");
+    }));
+    const bb = $("#atu-voltar");
+    if (bb) bb.addEventListener("click", () => {
+      if (!confirm(`Voltar o sistema para a versão anterior (${r.anterior})?`)) return;
+      pedir("/atualizacao/voltar", null, "Pedindo a volta para a versão anterior…");
+    });
+    // Durante a execução, acompanha ao vivo
+    clearInterval(pageTimer);
+    pageTimer = setInterval(render, rodando ? 3000 : 60000);
+  };
+  await render();
+}
+
 // ---------- Roteamento ----------
 const ROUTES = {
+  atualizacoes: ["atualizacoes", "Atualizações", pageAtualizacoes],
   olts: ["olts", "OLTs", pageOlts],
   backups: ["backups", "Backups", pageBackups],
   "": ["dashboard", "Dashboard", pageDashboard],

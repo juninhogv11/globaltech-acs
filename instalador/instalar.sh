@@ -623,7 +623,9 @@ EOF
     set_env $GENV GENIEACS_EXT_TIMEOUT 10000
   fi
   if [ $I_PORTAL = 1 ]; then
-    set_env $SGPENV WIFI_PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"
+    # Portal na mesma máquina: direto no Node (127.0.0.1:3100), sem passar pelo nginx. Pelo IP público, atrás de NAT,
+    # o pedido volta pelo roteador com o IP dele (ex.: 192.168.0.254) e o portal recusa (403) — visto na Superi em 25/11/2026.
+    set_env $SGPENV WIFI_PORTAL_URL "http://127.0.0.1:3100"
   elif [ -n "${PORTAL_EXT_URL:-}" ]; then
     set_env $SGPENV WIFI_PORTAL_URL "$PORTAL_EXT_URL"
   fi
@@ -772,6 +774,8 @@ if [ $I_PORTAL = 1 ]; then
     [ -n "${HUBSOFT_SENHA:-}" ] && set_env "$PENV" HUBSOFT_SENHA "$HUBSOFT_SENHA"
   fi
   set_env "$PENV" COOKIE_SECURE "$COOKIE_SECURE"
+  # Quem cria o portal pode atualizar o sistema pela página Atualizações (mantém se já foi configurado)
+  grep -q "^ATUALIZAR_USUARIOS=" "$PENV" || set_env "$PENV" ATUALIZAR_USUARIOS "$ADMIN_USER"
   set_env "$PENV" SPEEDTEST_DOWNLOAD_URL "$SPEED_DL"
   set_env "$PENV" SPEEDTEST_UPLOAD_BASE "http://$PORTAL_IP:$PORTAL_PORTA/speedtest/upload"
   if [ $I_ACS = 1 ]; then
@@ -828,7 +832,7 @@ if [ $I_BACKUP = 1 ]; then
   [ -z "$BK_TOKEN" ] && BK_TOKEN=$(gerar_segredo 40) && set_env $BENV TOKEN "$BK_TOKEN"
   [ $I_PORTAL = 0 ] && [ -n "${PORTAL_EXT_URL:-}" ] && set_env $BENV PORTAL_URL "$PORTAL_EXT_URL"
   if [ $I_PORTAL = 1 ]; then
-    set_env $BENV PORTAL_URL "http://$PORTAL_IP:$PORTAL_PORTA"
+    set_env $BENV PORTAL_URL "http://127.0.0.1:3100"   # mesma máquina: direto no Node (ver WIFI_PORTAL_URL)
     set_env "$PORTAL_APP/.env" BACKUP_AGENT_URL "http://127.0.0.1:7570"
     set_env "$PORTAL_APP/.env" BACKUP_TOKEN "$BK_TOKEN"
   fi
@@ -844,6 +848,14 @@ if [ $I_BACKUP = 1 ]; then
 fi
 
 [ $I_PORTAL = 1 ] && systemctl restart globaltech-portal
+
+# ============================================================================= ATUALIZADOR
+# Atualizações depois pelo portal (Configuração → Atualizações), a partir das versões marcadas no GitHub.
+# O acs.env vai para /etc/globaltech-acs (vale para todas as versões); reinstalar sempre recopia o daqui.
+etapa "Atualizador (versões do GitHub)"
+mkdir -p /etc/globaltech-acs; chmod 700 /etc/globaltech-acs
+[ $I_ACS = 1 ] && [ -f "$SRC/acs/acs.env" ] && install -m 600 "$SRC/acs/acs.env" /etc/globaltech-acs/acs.env
+bash "$SRC/atualizador/instalar-atualizador.sh" || echo "AVISO: o atualizador não foi instalado (rode depois: bash $SRC/atualizador/instalar-atualizador.sh)"
 
 # ============================================================================= FIM
 trap - ERR

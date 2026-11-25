@@ -220,6 +220,7 @@ async function watch() {
     watching = false;
   }
 }
-setInterval(watch, 20000).unref();
+// No modo verificação (atualizador testando a versão nova) não acompanha nada: só o portal principal age nos aparelhos
+if (!require("./env").VERIFICAR) setInterval(watch, 20000).unref();
 
 module.exports = { list, upload, remove, setMeta, compatible, board, upgradeTask, record, history, lockMinutes, watch, MAX_BYTES };

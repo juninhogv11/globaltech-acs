@@ -81,22 +81,31 @@ async function login(host, port, usuario, senha, timeout = 15000) {
     t = await s.esperar(new RegExp(`${PROMPT_RE.source}|${FALHA_RE.source}|${LOGIN_RE.source}`, "i"));
   } catch (e) { s.fechar(); throw e; }
   if (FALHA_RE.test(t) || LOGIN_RE.test(t.trim().split("\n").pop())) { s.fechar(); throw new Error("usuário ou senha recusados pela OLT"); }
-  const prompt = t.trim().split("\n").pop().trim();
   // Nome da OLT no prompt (ex.: "ZXAN#", "OLT(config)#", "typ:isadmin>#"): base para reconhecer o fim das respostas
-  const base = prompt.replace(/[>#$%]+\s*$/, "").replace(/\(.*$/, "");
-  s.promptRe = new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,40}[>#$%]{1,2}\\s*$");
+  const prompt = aprenderPrompt(s, t);
   return { sessao: s, prompt, banner: banner.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 3).join(" ") };
 }
 
-// Modo privilegiado (V-SOL: prompt ">" pede "enable" e a senha admin). Se não pedir senha, segue.
+// Aprende o prompt a partir da última linha recebida (base para reconhecer o fim das respostas)
+function aprenderPrompt(s, t) {
+  const prompt = t.trim().split("\n").pop().trim();
+  const base = prompt.replace(/[>#$%]+\s*$/, "").replace(/\(.*$/, "");
+  s.promptRe = new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,40}[>#$%]{1,2}\\s*$");
+  return prompt;
+}
+
+// Modo privilegiado (V-SOL/FiberHome: prompt ">" pede "enable" e a senha admin). Se não pedir senha, segue.
+// O nome no prompt pode mudar (FiberHome AN5516: "User>" -> "Admin#"): espera qualquer prompt e aprende o novo.
 async function enable(sessao, senhaAdmin) {
   sessao.enviar("enable");
-  const t = await sessao.esperar(new RegExp(`${PASS_RE.source}|${(sessao.promptRe || PROMPT_RE).source}`, "i"), 10000);
+  const t = await sessao.esperar(new RegExp(`${PASS_RE.source}|${PROMPT_RE.source}`, "i"), 10000);
+  let r = t;
   if (PASS_RE.test(t)) {
     sessao.enviar(senhaAdmin || "");
-    const r = await sessao.esperar(new RegExp(`${(sessao.promptRe || PROMPT_RE).source}|${FALHA_RE.source}|${PASS_RE.source}`, "i"), 10000);
+    r = await sessao.esperar(new RegExp(`${PROMPT_RE.source}|${FALHA_RE.source}|${PASS_RE.source}`, "i"), 10000);
     if (FALHA_RE.test(r) || PASS_RE.test(r)) throw new Error("senha admin (enable) recusada pela OLT");
   }
+  return aprenderPrompt(sessao, r);
 }
 
 // Executa comandos e devolve a saída de cada um (sem o eco do comando e sem o prompt final)

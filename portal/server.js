@@ -15,8 +15,9 @@ const backup = require("./lib/backup");
 const diagnostico = require("./lib/diagnostico");
 const olts = require("./lib/olts");
 const oltcoleta = require("./lib/oltcoleta");
-oltcoleta.iniciar(() => devices.all());
+if (!env.VERIFICAR) oltcoleta.iniciar(() => devices.all());
 const assistente = require("./lib/assistente");
+const atualizacao = require("./lib/atualizacao");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
 const WIFI_BACKUP_ALLOW = (process.env.WIFI_BACKUP_ALLOW || "192.168.10.2").split(",").map((s) => s.trim());
@@ -210,21 +211,22 @@ api.post("/api/devices/:id/set-channel", async (req, res) => {
 });
 
 // ---------- Wi-Fi: alterar pelo portal e guardar cópia para restaurar após reset ----------
-const WIFI_OBJECTS = ["Device.WiFi.Radio", "Device.WiFi.SSID", "Device.WiFi.AccessPoint"];
+// TR-181 (XX530v) e TR-098 (ex.: Realtek FW323DAC, roteadores TP-Link antigos)
+const wifiObjects = (doc) => (doc.Device ? ["Device.WiFi.Radio", "Device.WiFi.SSID", "Device.WiFi.AccessPoint"] : ["InternetGatewayDevice.LANDevice.1.WLANConfiguration"]);
 
 api.get("/api/devices/:id/wifi", async (req, res) => {
   let doc = await nbi.device(req.params.id);
-  if (!doc.Device) return res.json({ supported: false });
   let prim = lan.wifiPrimary(doc);
   // Sem o vínculo SSID -> rádio no cache: lê do equipamento uma vez
   if (!Object.values(prim).some((p) => p.apPath)) {
-    for (const o of WIFI_OBJECTS) {
+    for (const o of wifiObjects(doc)) {
       const r = await nbi.task(req.params.id, { name: "refreshObject", objectName: o }, 20000);
       if (r.status === 202) return res.status(409).json({ error: "O equipamento não respondeu agora. Tente de novo em alguns minutos." });
     }
     doc = await nbi.device(req.params.id);
     prim = lan.wifiPrimary(doc);
   }
+  if (!Object.values(prim).some((p) => p.apPath)) return res.json({ supported: false });
   const serial = devices.normalize(doc).serial;
   res.json({
     supported: true,
@@ -236,9 +238,8 @@ api.get("/api/devices/:id/wifi", async (req, res) => {
 api.post("/api/devices/:id/wifi", async (req, res) => {
   const bands = (req.body || {}).bands || {};
   const doc0 = await nbi.device(req.params.id);
-  if (!doc0.Device) return res.status(400).json({ error: "Alterar Wi-Fi pelo portal só está disponível para modelos TR-181 (XX530v)." });
-  // Lê rádios, SSIDs e AccessPoints antes, para saber exatamente onde gravar
-  for (const o of WIFI_OBJECTS) {
+  // Lê rádios, SSIDs e AccessPoints (TR-098: WLANConfiguration) antes, para saber exatamente onde gravar
+  for (const o of wifiObjects(doc0)) {
     const r = await nbi.task(req.params.id, { name: "refreshObject", objectName: o }, 20000);
     if (r.status === 202) return res.status(409).json({ error: "O equipamento não respondeu agora. Tente de novo em alguns minutos." });
   }
@@ -254,7 +255,7 @@ api.post("/api/devices/:id/wifi", async (req, res) => {
     if (ssid.length < 1 || ssid.length > 32) return res.status(400).json({ error: `Nome da rede ${band} precisa ter de 1 a 32 caracteres.` });
     if (pass && (pass.length < 8 || pass.length > 63)) return res.status(400).json({ error: `A senha ${band} precisa ter de 8 a 63 caracteres.` });
     if (ssid !== p.ssid) params.push([p.ssidPath + "SSID", ssid, "xsd:string"]);
-    if (pass) params.push([p.apPath + "Security.KeyPassphrase", pass, "xsd:string"]);
+    if (pass) for (const pp of p.passParams || [p.apPath + "Security.KeyPassphrase"]) params.push([pp, pass, "xsd:string"]);
     toSave[band] = { ssid, pass };
   }
   if (!params.length) return res.status(400).json({ error: "Nada para alterar." });
@@ -278,6 +279,20 @@ api.post("/api/devices/:id/wifi", async (req, res) => {
     console.log(new Date().toISOString(), `hubsoft wifi serviço ${sgpContrato || "-"}: ${hub.ok ? "ok" : "ERRO"} ${hub.msg}`);
   }
   res.json({ ...taskResult(r), hubsoft: hub });
+});
+
+// ---------- Atualizações do sistema (versões marcadas no GitHub; quem instala é o atualizador, como root) ----------
+api.get("/api/atualizacao", async (req, res) => res.json(atualizacao.estado(req.user.user)));
+api.post("/api/atualizacao/verificar", async (req, res) => res.json(atualizacao.pedir({ acao: "verificar" }, req.user.user)));
+api.post("/api/atualizacao/aplicar", async (req, res) => {
+  const r = atualizacao.pedir({ acao: "aplicar", versao: String((req.body || {}).versao || "") }, req.user.user);
+  console.log(new Date().toISOString(), `atualização para ${req.body.versao} pedida por ${req.user.user}`);
+  res.json(r);
+});
+api.post("/api/atualizacao/voltar", async (req, res) => {
+  const r = atualizacao.pedir({ acao: "voltar" }, req.user.user);
+  console.log(new Date().toISOString(), `volta para a versão anterior pedida por ${req.user.user}`);
+  res.json(r);
 });
 
 // ---------- Firmware (arquivos por modelo no GenieACS e atualização do equipamento) ----------
@@ -551,6 +566,8 @@ const server = http.createServer(async (req, res) => {
 
     // Upload de foto precisa de corpo maior que o padrão de 100 KB
     req.body = await readJson(req, /^\/api\/models\/[^/]+\/image$/.test(pathname) ? 3 * 1024 * 1024 : undefined);
+    // Saúde (sem login): o atualizador confere que o portal subiu e em qual versão
+    if (req.method === "GET" && pathname === "/api/saude") return res.json({ ok: true, versao: env.VERSAO, verificacao: env.VERIFICAR });
     if (req.method === "POST" && pathname === "/api/login") return auth.login(req, res);
     if (req.method === "POST" && pathname === "/api/logout") return auth.logout(req, res);
 

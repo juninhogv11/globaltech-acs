@@ -1,0 +1,9 @@
+[Unit]
+Description=Globaltech ACS: pedidos de atualização feitos pelo portal
+
+[Path]
+PathExists=/var/lib/globaltech-atualizador/pedidos/pedido.json
+Unit=globaltech-atualizador.service
+
+[Install]
+WantedBy=multi-user.target

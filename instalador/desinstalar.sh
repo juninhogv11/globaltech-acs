@@ -82,7 +82,7 @@ if [ $SALVAR = 1 ]; then
     fi
   fi
   ARQS=()
-  for p in opt/genieacs opt/globaltech-portal/data opt/globaltech-portal/.env etc/genieacs-backup etc/globaltech-instalador; do
+  for p in opt/genieacs opt/globaltech-portal/data opt/globaltech-portal/.env etc/genieacs-backup etc/globaltech-instalador etc/globaltech-acs; do
     [ -e "/$p" ] && ARQS+=("$p")
   done
   [ ${#ARQS[@]} -gt 0 ] && tar czf "$COPIA_DIR/arquivos.tar.gz" -C / "${ARQS[@]}" && echo "Arquivos salvos: arquivos.tar.gz (${ARQS[*]})"
@@ -92,9 +92,11 @@ fi
 # ----------------------------------------------------------------------------- remoção
 etapa "Parando e removendo os serviços"
 UNIDADES="genieacs-cwmp genieacs-nbi genieacs-fs genieacs-ui globaltech-portal genieacs-backup-api genieacs-firewall
-genieacs-backup.timer genieacs-restart-semanal.timer genieacs-limpeza-offline.timer"
+genieacs-backup.timer genieacs-restart-semanal.timer genieacs-limpeza-offline.timer
+globaltech-atualizador.path globaltech-atualizador-verificar.timer"
 for u in $UNIDADES; do systemctl disable --now "$u" >/dev/null 2>&1 && echo "parado: $u"; done
-rm -f /etc/systemd/system/genieacs-*.service /etc/systemd/system/genieacs-*.timer /etc/systemd/system/globaltech-portal.service
+rm -f /etc/systemd/system/genieacs-*.service /etc/systemd/system/genieacs-*.timer /etc/systemd/system/globaltech-portal.service /etc/systemd/system/globaltech-atualizador*
+rm -rf /opt/globaltech-atualizador /var/lib/globaltech-atualizador /etc/globaltech-acs /usr/local/sbin/globaltech-atualizar
 rm -f /etc/systemd/system/multi-user.target.wants/genieacs-* /etc/systemd/system/timers.target.wants/genieacs-*
 systemctl daemon-reload
 

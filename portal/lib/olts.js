@@ -15,7 +15,12 @@ const TIPOS = {
   vsol: "V-SOL 1600D",
   zte: "ZTE C610",
   nokia: "Nokia 7362 ISAM DF-16GW",
+  zte_c220: "ZTE C220",
+  fh_an5516: "FiberHome AN5516",
+  fh_an6000: "FiberHome AN6000",
 };
+// Tipos que entram com prompt de usuário (">") e pedem "enable" com a senha admin
+const COM_ENABLE = new Set(["vsol", "fh_an5516", "fh_an6000"]);
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
 function chave() {
@@ -106,7 +111,7 @@ function naFila(id, fn) {
   filas.set(id, p.catch(() => {}));
   return p;
 }
-const promptUsuario = (p) => /[^#]>\s*$/.test(p); // V-SOL sem enable termina em ">"
+const promptUsuario = (p) => /[^#]>\s*$/.test(p); // V-SOL/FiberHome sem enable terminam em ">" (ex.: "User>")
 
 // Testa SNMP (nome, descrição e tempo ligado) e Telnet (login). Não muda nada na OLT.
 async function testar(id) {
@@ -126,8 +131,8 @@ async function testar(id) {
         const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
         s = l.sessao;
         r.telnet = { ok: true, prompt: l.prompt, banner: l.banner };
-        // V-SOL (prompt ">"): confere também o modo privilegiado com a senha admin
-        if (o.tipo === "vsol" && promptUsuario(l.prompt)) {
+        // V-SOL e FiberHome (prompt ">"): confere também o modo privilegiado com a senha admin
+        if (COM_ENABLE.has(o.tipo) && promptUsuario(l.prompt)) {
           try { await telnet.enable(s, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha)); r.telnet.enable = "ok"; }
           catch (e) { r.telnet.enable = e.message; }
         }
@@ -141,7 +146,7 @@ async function testar(id) {
 }
 
 // Comandos SOMENTE de leitura (para levantar o formato das saídas de cada fabricante)
-const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms)$/i;
+const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+)$/i; // "cd": navegação da CLI FiberHome AN5516
 async function lerComandos(id, comandos) {
   const o = buscar(id);
   const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 40);
@@ -152,7 +157,7 @@ async function lerComandos(id, comandos) {
   return naFila(o.id, async () => {
     const l = await telnet.login(o.ip, o.telnetPorta, o.usuario, decifrar(o.senha));
     try {
-      if (o.tipo === "vsol" && promptUsuario(l.prompt)) await telnet.enable(l.sessao, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha));
+      if (COM_ENABLE.has(o.tipo) && promptUsuario(l.prompt)) await telnet.enable(l.sessao, o.senhaAdmin ? decifrar(o.senhaAdmin) : decifrar(o.senha));
       return { prompt: l.prompt, saidas: await telnet.executar(l.sessao, lista, 60000) };
     } finally { l.sessao.fechar(); }
   });

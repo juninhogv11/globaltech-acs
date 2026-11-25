@@ -55,29 +55,43 @@ function nomeSistema() {
   return "sgp";
 }
 
-function fromSgp(serial, cb) {
+function wifiDe(c) {
+  const wifi = {};
+  if (c.wifi_ssid && c.wifi_password) wifi["2.4GHz"] = { ssid: c.wifi_ssid, pass: c.wifi_password };
+  if (c.wifi_ssid_5 && c.wifi_password_5) wifi["5GHz"] = { ssid: c.wifi_ssid_5, pass: c.wifi_password_5 };
+  return Object.keys(wifi).length ? { source: nomeSistema(), wifi } : null;
+}
+
+// contrato (tag SGP_CONTRATO_) e mac (MAC WAN) são opcionais: no Hubsoft, com o contrato vai direto ao serviço
+// (uma consulta só) e, se o serial não achar nada, tenta pelo MAC. No SGP continua só pelo serial.
+function fromSgp(serial, contrato, mac, cb) {
   let sistema;
   try {
     sistema = require(path.join(__dirname, "sistema"));
   } catch (e) {
     return cb(null);
   }
+  const porServico = sistema.wifiPorServico && nomeSistema() === "hubsoft"
+    ? (id, m, next) => sistema.wifiPorServico([id, m], (err, c) => next(c && !c.error ? wifiDe(c) : null))
+    : null;
+  if (porServico && contrato) return porServico(contrato, "", cb);
   // "wifi": no Hubsoft busca também a Documentação de Senhas do serviço (o SGP ignora esse argumento)
   sistema.contratoPorSerial([serial, "wifi"], (err, c) => {
-    if (!c || c.error) return cb(null);
-    const wifi = {};
-    if (c.wifi_ssid && c.wifi_password) wifi["2.4GHz"] = { ssid: c.wifi_ssid, pass: c.wifi_password };
-    if (c.wifi_ssid_5 && c.wifi_password_5) wifi["5GHz"] = { ssid: c.wifi_ssid_5, pass: c.wifi_password_5 };
-    cb(Object.keys(wifi).length ? { source: nomeSistema(), wifi } : null);
+    const w = c && !c.error ? wifiDe(c) : null;
+    if (w || !porServico || !mac) return cb(w);
+    porServico("", mac, cb);
   });
 }
 
+// ext("wifibackup", "get", serial[, contrato, mac])
 function get(args, callback) {
   const serial = String(args[0] || "").trim();
+  const contrato = String(args[1] || "").trim();
+  const mac = String(args[2] || "").trim();
   if (!serial) return callback(null, "");
   fromPortal(serial, (p) => {
     if (p) return callback(null, JSON.stringify(p));
-    fromSgp(serial, (s) => callback(null, s ? JSON.stringify(s) : ""));
+    fromSgp(serial, contrato, mac, (s) => callback(null, s ? JSON.stringify(s) : ""));
   });
 }
 

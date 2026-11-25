@@ -3,9 +3,13 @@
 const nbi = require("./nbi");
 const { ONLINE_MINUTES } = require("./env");
 
-// Potência óptica: TP-Link XX530v (TR-181) informa em décimos de µW
-const RX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.RXPower"];
-const TX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.TXPower"];
+// Potência óptica em décimos de µW: TP-Link XX530v (TR-181) e ONUs padrão China Telecom (TR-098 "X_CT-COM",
+// ex.: Realtek FW323DAC — conferido 25/11/2026: RX 16 = -27,96 dBm, igual ao que a OLT FiberHome mediu)
+const CTCOM_GPON = "InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig";
+const RX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.RXPower", `${CTCOM_GPON}.RXPower`];
+const TX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.TXPower", `${CTCOM_GPON}.TXPower`];
+// Nome do Wi-Fi: o "SSID" nem sempre é calculado pela provision; SSID24/SSID58 servem de reserva
+const SSID_PATHS = ["VirtualParameters.SSID", "VirtualParameters.SSID24", "VirtualParameters.SSID58"];
 
 // Versão do firmware: o virtual parameter não é recalculado depois de uma atualização,
 // então usa a leitura mais recente entre ele e os parâmetros do próprio equipamento
@@ -16,7 +20,7 @@ const HARDWARE_PATHS = ["Device.DeviceInfo.HardwareVersion", "InternetGatewayDev
 const PROJECTION = [
   "_id", "_deviceId", "_lastInform", "_registered", "_tags",
   "VirtualParameters.IP", "VirtualParameters.WANIP", "VirtualParameters.LANIP",
-  "VirtualParameters.MAC", "VirtualParameters.SSID", ...SOFTWARE_PATHS, ...HARDWARE_PATHS,
+  "VirtualParameters.MAC", ...SSID_PATHS, ...SOFTWARE_PATHS, ...HARDWARE_PATHS,
   ...RX_PATHS, ...TX_PATHS,
 ].join(",");
 
@@ -101,7 +105,7 @@ function normalize(doc) {
     mac: val(doc, "VirtualParameters.MAC") || "",
     wanIp: val(doc, "VirtualParameters.IP") || val(doc, "VirtualParameters.WANIP") || "",
     lanIp: val(doc, "VirtualParameters.LANIP") || "",
-    ssid: val(doc, "VirtualParameters.SSID") || "",
+    ssid: String(first(doc, SSID_PATHS) || ""),
     software: freshest(doc, SOFTWARE_PATHS),
     hardware: String(first(doc, HARDWARE_PATHS) || ""),
     rx,
@@ -111,8 +115,8 @@ function normalize(doc) {
     registered: doc._registered || null,
     online,
     uptime: uptimeNow(doc, online),
-    // Tem fibra (ONU/ONT)? MikroTik e roteadores TR-098 não têm Device.Optical
-    hasOptical: rx !== null || !!get(doc, "Device.Optical.Interface.1"),
+    // Tem fibra (ONU/ONT)? MikroTik e roteadores TR-098 comuns não têm Device.Optical nem X_CT-COM_GponInterfaceConfig
+    hasOptical: rx !== null || !!get(doc, "Device.Optical.Interface.1") || !!get(doc, CTCOM_GPON),
     // Gravados pela provision_ipoe como tags SGP_CLIENTE_<id> / SGP_CONTRATO_<id>
     sgpCliente: sgpTag(doc._tags, "CLIENTE"),
     sgpContrato: sgpTag(doc._tags, "CONTRATO"),

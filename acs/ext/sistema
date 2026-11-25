@@ -129,5 +129,13 @@ function pppoeLoginByMac(args, callback) {
   });
 }
 
+// Wi-Fi pelo serviço/MAC (só Hubsoft; no SGP o Wi-Fi vem junto do contrato achado pelo serial)
+function wifiPorServico(args, callback) {
+  const hs = hubsoft();
+  if (hs && hs.wifiPorServico) return hs.wifiPorServico(args, callback);
+  callback(null, null);
+}
+
 exports.contratoPorSerial = contratoPorSerial;
 exports.pppoeLoginByMac = pppoeLoginByMac;
+exports.wifiPorServico = wifiPorServico;
