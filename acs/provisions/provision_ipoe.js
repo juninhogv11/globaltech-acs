@@ -170,6 +170,39 @@ if (serial) {
   }
 }
 
+// 1b: pelo serial GPON da ONU. Alguns modelos TR-181 (ex.: XC220-G3v) informam em DeviceID.SerialNumber um número
+// interno (2253048003271); o sistema de gestão conhece o serial GPON "TPLGD2736610", que o equipamento guarda em
+// hexadecimal em Device.Optical.Interface.1.GponAuth.GponSn (54504C47D2736610 = "TPLG" + D2736610).
+// Só tenta se o serial normal não achou nada (sem erro) e não tem formato de serial GPON (o XX530v já informa TPLG...).
+function gponSerial(v) {
+  const s = String(v || "").trim();
+  if (/^[0-9A-Fa-f]{16}$/.test(s)) {
+    let vendor = "";
+    for (let i = 0; i < 8; i += 2) vendor += String.fromCharCode(parseInt(s.substr(i, 2), 16));
+    return /^[A-Z]{4}$/.test(vendor) ? vendor + s.substr(8).toUpperCase() : "";
+  }
+  return /^[A-Za-z]{4}[0-9A-Fa-f]{8}$/.test(s) ? s.substr(0, 4).toUpperCase() + s.substr(4).toUpperCase() : "";
+}
+if (!auth && !sgpErro && !isIGD && !/^[A-Za-z]{4}[0-9A-Fa-f]{8}$/.test(serial)) {
+  const gObj = declare("Device.Optical.Interface.1.GponAuth.GponSn", {value: 1});
+  const gsn = gponSerial((gObj && gObj.value) ? gObj.value[0] : "");
+  if (gsn && gsn.toUpperCase() !== serial.toUpperCase()) {
+    let r = ext("sistema", "contratoPorSerial", gsn);
+    if (r && r.error) {
+      sgpErro = String(r.error);
+      log(">>> [ETAPA 4] SGP(serial GPON " + gsn + ") ERRO: " + sgpErro);
+    } else if (r && r.username) {
+      auth = r;
+      macEncontrado = "serial GPON " + gsn;
+      log(">>> [ETAPA 4] SGP(serial GPON " + gsn + ") => contrato " + r.username);
+    } else if (r && r.cancelado) {
+      log(">>> [ETAPA 4] SGP(serial GPON " + gsn + ") => contrato " + r.contrato + " (cliente " + r.cliente + ") está " + r.status + ": ignorado");
+    } else {
+      log(">>> [ETAPA 4] SGP(serial GPON " + gsn + ") => sem contrato");
+    }
+  }
+}
+
 // 2º: pelo login IPoE, que é o MAC WAN (só se o SGP respondeu sem erro)
 for (let i = 0; !sgpErro && i < candidates.length && i < MAX_TENTATIVAS && !auth; i++) {
   let r = ext("sistema", "pppoeLoginByMac", candidates[i]);
