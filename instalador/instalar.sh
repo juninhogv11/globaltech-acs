@@ -74,7 +74,12 @@ senha() {
 }
 sim_nao() { whiptail --title "$TITULO" ${3:+--defaultno} --yesno "$1" "${2:-10}" 76; }
 aviso()   { whiptail --title "$TITULO" --msgbox "$1" "${2:-12}" 76; }
-gerar_segredo() { head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"; }
+# Sem "head" no fim do pipe (evita SIGPIPE com pipefail): gera sobrando e corta no bash
+gerar_segredo() {
+  local s=""
+  while [ ${#s} -lt "${1:-32}" ]; do s+=$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9'); done
+  printf '%s' "${s:0:${1:-32}}"
+}
 ip_valido() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 pedir_ip() {
   local v
@@ -657,6 +662,11 @@ EOF
   etapa "Configuração das provisions (acs/acs.env)"
   AENV="$SRC/acs/acs.env"
   do_exemplo "$SRC/acs/acs.env.example" "$AENV"
+  if [ -z "${CR_PASS:-}" ]; then
+    # Mantém a senha que já estava no acs.env (reinstalação); senão gera uma nova
+    CR_PASS=$(awk -F= 'index($0,"CR_PASS=")==1 {sub(/^CR_PASS=/,""); print; exit}' "$AENV")
+    [ -z "$CR_PASS" ] && CR_PASS=$(gerar_segredo 18) && echo "Senha do Connection Request gerada automaticamente (fica em $AENV)."
+  fi
   set_env "$AENV" NBI_URL "http://127.0.0.1:7557"
   set_env "$AENV" ACS_URL "http://$ACS_HOST:$ACS_PORTA/"
   set_env "$AENV" CR_USER "$CR_USER"
@@ -665,6 +675,14 @@ EOF
   set_env "$AENV" NTP_SERVER "$NTP_SERVER"
   set_env "$AENV" GENIEACS_EXT_DIR "/opt/genieacs/ext"
   chmod 600 "$AENV"
+  # Confere antes de publicar: nenhuma variável usada nas provisions pode ficar vazia
+  VAZIAS=""
+  for k in $(cat "$SRC"/acs/provisions/* "$SRC"/acs/presets/* "$SRC"/acs/virtual_parameters/* 2>/dev/null | grep -o '{{[A-Z0-9_]*}}' | tr -d '{}' | sort -u); do
+    v=$(awk -F= -v k="$k" 'index($0,k"=")==1 {sub(/^[^=]*=/,""); print; exit}' "$AENV")
+    [ -z "$v" ] && VAZIAS+=" $k"
+  done
+  [ -n "$VAZIAS" ] && falha "variáveis vazias em $AENV:$VAZIAS — preencha (nano $AENV) e rode o instalador de novo."
+  echo "acs.env conferido: todas as variáveis das provisions estão preenchidas."
 
   etapa "Simulação da publicação (nada é gravado)"
   ( cd "$SRC/acs" && node deploy-acs.js --dry-run ) | tee /tmp/globaltech-dryrun.txt
