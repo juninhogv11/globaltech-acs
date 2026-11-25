@@ -4,6 +4,13 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-2 — Correção: botões da página Atualizações
+
+- Corrigido o erro "read-only file system" ao clicar em Verificar agora / Atualizar: o serviço do portal não tinha
+  permissão para deixar o pedido para o atualizador.
+- **Atenção:** servidor que já está na v2026.11.25 precisa receber esta versão pela linha de comando, uma vez
+  (como root): `globaltech-atualizar aplicar v2026.11.25-2`. Depois disso os botões do portal funcionam.
+
 ## v2026.11.25 — Atualizador pelo portal, novas OLTs e ONUs China Telecom
 
 - **Atualizações pelo portal:** nova página Configuração → Atualizações. Mostra a versão instalada e as novas, com o que

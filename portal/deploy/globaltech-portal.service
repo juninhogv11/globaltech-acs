@@ -17,6 +17,8 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/globaltech-portal/data
+# Pedidos para o atualizador (página Atualizações). "-" = ignora se a pasta não existir (servidor sem atualizador)
+ReadWritePaths=-/var/lib/globaltech-atualizador/pedidos
 
 [Install]
 WantedBy=multi-user.target
