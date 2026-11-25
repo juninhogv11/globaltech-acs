@@ -108,6 +108,23 @@ Pode rodar quantas vezes quiser (para corrigir uma resposta ou atualizar o códi
 
 Log completo: `/var/log/globaltech-instalador.log` (não contém senhas).
 
+## Desinstalar (para reinstalar do zero)
+
+```bash
+bash instalador/desinstalar.sh
+```
+
+Mostra o que está instalado, pede para digitar **REMOVER** e oferece salvar antes uma cópia em
+`/root/globaltech-copia-<data>/` (banco do GenieACS, dados e `.env` do portal, `/opt/genieacs`, configuração
+e senha do backup). Remove GenieACS, MongoDB (contêiner e dados), portal, backup, firewall da NBI, timers,
+usuários `genieacs`/`portal` e as respostas salvas do instalador. **Não** remove Docker, Node.js, nginx nem
+outros sites do nginx. Sem perguntas: `bash instalador/desinstalar.sh --sim` (salva a cópia mesmo assim).
+
+Para voltar o banco salvo depois de reinstalar:
+```bash
+docker exec -i mongodb mongorestore --gzip --archive --drop < /root/globaltech-copia-<data>/genieacs.archive.gz
+```
+
 ## Migrar os dados de um servidor antigo
 
 O instalador cria um GenieACS **vazio**. Para trazer os equipamentos do servidor atual, depois da instalação:
