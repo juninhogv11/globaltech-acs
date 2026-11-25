@@ -9,6 +9,7 @@ const lan = require("./lib/lan");
 const speedtest = require("./lib/speedtest");
 const models = require("./lib/models");
 const wifibackup = require("./lib/wifibackup");
+const hubsoft = require("./lib/hubsoft");
 const firmware = require("./lib/firmware");
 const backup = require("./lib/backup");
 const diagnostico = require("./lib/diagnostico");
@@ -258,11 +259,25 @@ api.post("/api/devices/:id/wifi", async (req, res) => {
   }
   if (!params.length) return res.status(400).json({ error: "Nada para alterar." });
   const r = await nbi.task(req.params.id, { name: "setParameterValues", parameterValues: params }, 20000);
-  const serial = devices.normalize(doc).serial;
-  wifibackup.put(serial, toSave, req.user.user);
+  const { serial, sgpContrato } = devices.normalize(doc);
+  const salvo = wifibackup.put(serial, toSave, req.user.user);
   // Não registra senhas: só quais faixas foram alteradas
   console.log(new Date().toISOString(), `wifi alterado em ${req.params.id} (${Object.keys(toSave).join(", ")}) por ${req.user.user}`);
-  res.json(taskResult(r));
+  // Hubsoft: grava também na Documentação de Senhas do serviço (é de lá que o ACS restaura após reset)
+  let hub = null;
+  if (hubsoft.ativo()) {
+    if (!sgpContrato) {
+      hub = { ok: false, msg: "equipamento sem serviço do Hubsoft vinculado" };
+    } else {
+      try {
+        hub = { ok: true, msg: (await hubsoft.gravarWifi(sgpContrato, salvo.wifi)).join(", ") || "nada a gravar" };
+      } catch (e) {
+        hub = { ok: false, msg: e.message };
+      }
+    }
+    console.log(new Date().toISOString(), `hubsoft wifi serviço ${sgpContrato || "-"}: ${hub.ok ? "ok" : "ERRO"} ${hub.msg}`);
+  }
+  res.json({ ...taskResult(r), hubsoft: hub });
 });
 
 // ---------- Firmware (arquivos por modelo no GenieACS e atualização do equipamento) ----------

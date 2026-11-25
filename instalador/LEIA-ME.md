@@ -141,8 +141,9 @@ Veja também `acs/servidor/MIGRACAO-DEBIAN12.md`.
 - Para o ACS achar o cliente, o serviço no Hubsoft precisa ter **um** destes: a CPE/ONU vinculada à
   autenticação (serial), o equipamento no patrimônio em comodato (número de série), o login RADIUS igual
   ao MAC WAN (`0cef-1507-d70b`) ou o MAC WAN no campo MAC da autenticação.
-- Wi-Fi para restaurar após reset: cadastre na **Documentação de Senhas** do serviço uma linha com descrição
-  "Wi-Fi" (usuário = nome da rede, senha = senha da rede) e, se houver, outra "Wi-Fi 5G".
+- Wi-Fi para restaurar após reset: fica na **Documentação de Senhas** do serviço, linhas "Wi-Fi" e "Wi-Fi 5G"
+  (usuário = nome da rede, senha = senha da rede). O botão **"Alterar Wi-Fi"** do portal grava/atualiza essas linhas
+  sozinho; também dá para cadastrar à mão no Hubsoft.
 - Servidor que já estava instalado com SGP: atualize o código (`git pull`) e rode o instalador de novo
   escolhendo Hubsoft — ele grava `SISTEMA=hubsoft` e publica a extensão nova.
 

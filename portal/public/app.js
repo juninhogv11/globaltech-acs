@@ -626,7 +626,9 @@ function bindWifiEdit(id) {
         sub.textContent = "Gravando…";
         try {
           const r = await api(`/devices/${enc(id)}/wifi`, { method: "POST", body: { bands }, loading: "Gravando Wi-Fi no roteador…" });
-          toast(r.done ? "Wi-Fi gravado no roteador e cópia guardada." : "Equipamento não respondeu agora; a alteração fica na fila. Cópia guardada.");
+          const hub = r.hubsoft ? (r.hubsoft.ok ? ` ${SISTEMA}: ${r.hubsoft.msg}.` : ` Não gravou no ${SISTEMA}: ${r.hubsoft.msg}.`) : "";
+          toast((r.done ? "Wi-Fi gravado no roteador e cópia guardada." : "Equipamento não respondeu agora; a alteração fica na fila. Cópia guardada.") + hub,
+            !!(r.hubsoft && !r.hubsoft.ok));
           form.hidden = true;
           setTimeout(() => route(true), 1500);
         } catch (ex) {

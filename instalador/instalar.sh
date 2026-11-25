@@ -333,6 +333,26 @@ testar_hubsoft() {
   [ -z "$HUBSOFT_ERRO" ] && HUBSOFT_ERRO="sem resposta de $HUBSOFT_URL"
   return 1
 }
+# Pergunta os dados da API do Hubsoft e testa o login (usados pelo ACS e pelo portal)
+perguntar_hubsoft() {
+  aviso "Hubsoft: use os dados de API criados pelo administrador do Hubsoft:\nURL da API, client_id, client_secret, usuário e senha da API.\n\n(documentação: https://docs.hubsoft.com.br)" 12
+  while true; do
+    while true; do
+      HUBSOFT_URL=$(perguntar "Hubsoft — URL da API (ex.: https://api.suaempresa.hubsoft.com.br):" "${HUBSOFT_URL:-https://api.}")
+      HUBSOFT_URL=${HUBSOFT_URL%/}
+      [[ "$HUBSOFT_URL" =~ ^https?://[^/]+$ ]] && break
+      aviso "Use só o endereço, sem caminho (ex.: https://api.suaempresa.hubsoft.com.br)." 8
+    done
+    HUBSOFT_CLIENT_ID=$(perguntar "Hubsoft — client_id:" "${HUBSOFT_CLIENT_ID:-}")
+    HUBSOFT_CLIENT_SECRET=$(senha "Hubsoft — client_secret:")
+    HUBSOFT_USUARIO=$(perguntar "Hubsoft — usuário da API:" "${HUBSOFT_USUARIO:-}")
+    HUBSOFT_SENHA=$(senha "Hubsoft — senha do usuário da API:")
+    if testar_hubsoft; then
+      aviso "Login na API do Hubsoft: OK." 8; return 0
+    fi
+    sim_nao "NÃO consegui entrar na API do Hubsoft:\n\n  $HUBSOFT_ERRO\n\nConfira a URL, o client_id/client_secret e o usuário/senha da API.\n\nContinuar assim mesmo? (Não = digitar de novo)" 15 nao && return 0
+  done
+}
 
 # --- 2. GenieACS
 if [ $I_ACS = 1 ]; then
@@ -351,23 +371,7 @@ if [ $I_ACS = 1 ]; then
     SGP_APP=$(perguntar "SGP — nome do APP (app):" "${SGP_APP:-}")
     SGP_TOKEN=$(senha "SGP — TOKEN da API:")
   elif [ "$SISTEMA" = hubsoft ]; then
-    aviso "Hubsoft: use os dados de API criados pelo administrador do Hubsoft:\nURL da API, client_id, client_secret, usuário e senha da API.\n\n(documentação: https://docs.hubsoft.com.br)" 12
-    while true; do
-      while true; do
-        HUBSOFT_URL=$(perguntar "Hubsoft — URL da API (ex.: https://api.suaempresa.hubsoft.com.br):" "${HUBSOFT_URL:-https://api.}")
-        HUBSOFT_URL=${HUBSOFT_URL%/}
-        [[ "$HUBSOFT_URL" =~ ^https?://[^/]+$ ]] && break
-        aviso "Use só o endereço, sem caminho (ex.: https://api.suaempresa.hubsoft.com.br)." 8
-      done
-      HUBSOFT_CLIENT_ID=$(perguntar "Hubsoft — client_id:" "${HUBSOFT_CLIENT_ID:-}")
-      HUBSOFT_CLIENT_SECRET=$(senha "Hubsoft — client_secret:")
-      HUBSOFT_USUARIO=$(perguntar "Hubsoft — usuário da API:" "${HUBSOFT_USUARIO:-}")
-      HUBSOFT_SENHA=$(senha "Hubsoft — senha do usuário da API:")
-      if testar_hubsoft; then
-        aviso "Login na API do Hubsoft: OK." 8; break
-      fi
-      sim_nao "NÃO consegui entrar na API do Hubsoft:\n\n  $HUBSOFT_ERRO\n\nConfira a URL, o client_id/client_secret e o usuário/senha da API.\n\nContinuar assim mesmo? (Não = digitar de novo)" 15 nao && break
-    done
+    perguntar_hubsoft
   fi
 
   if [ $I_PORTAL = 0 ]; then
@@ -407,6 +411,13 @@ if [ $I_PORTAL = 1 ]; then
   fi
   if [ "$SISTEMA" = hubsoft ]; then
     SGP_URL=""
+    # Só o portal (ACS em outro servidor): o portal precisa da API para gravar o Wi-Fi no Hubsoft
+    if [ $I_ACS = 0 ]; then
+      HUBSOFT_CLIENT_SECRET=""; HUBSOFT_SENHA=""
+      if sim_nao "Gravar no Hubsoft o Wi-Fi alterado pelo portal?\n\n(fica na Documentação de Senhas do serviço; o ACS usa para restaurar\no Wi-Fi após reset de fábrica)\n\nPrecisa dos dados da API do Hubsoft." 13; then
+        perguntar_hubsoft
+      fi
+    fi
     CLIENTE_URL=$(perguntar "Link para abrir o cliente no Hubsoft (opcional).\nAbra um cliente no Hubsoft, copie o endereço do navegador e troque\no número do cliente (id_cliente) por {id}. Vazio = sem link." "${CLIENTE_URL:-}" opcional)
   elif [ "$SISTEMA" = sgp ]; then
     CLIENTE_URL=""
@@ -752,6 +763,14 @@ if [ $I_PORTAL = 1 ]; then
   set_env "$PENV" SGP_URL "$SGP_URL"
   set_env "$PENV" SISTEMA_NOME "$SISTEMA_NOME"
   set_env "$PENV" CLIENTE_URL "${CLIENTE_URL:-}"
+  # Hubsoft: o portal grava o Wi-Fi alterado na Documentação de Senhas do serviço
+  if [ "$SISTEMA" = hubsoft ] && [ -n "${HUBSOFT_URL:-}" ]; then
+    set_env "$PENV" HUBSOFT_URL "$HUBSOFT_URL"
+    set_env "$PENV" HUBSOFT_CLIENT_ID "${HUBSOFT_CLIENT_ID:-}"
+    set_env "$PENV" HUBSOFT_USUARIO "${HUBSOFT_USUARIO:-}"
+    [ -n "${HUBSOFT_CLIENT_SECRET:-}" ] && set_env "$PENV" HUBSOFT_CLIENT_SECRET "$HUBSOFT_CLIENT_SECRET"
+    [ -n "${HUBSOFT_SENHA:-}" ] && set_env "$PENV" HUBSOFT_SENHA "$HUBSOFT_SENHA"
+  fi
   set_env "$PENV" COOKIE_SECURE "$COOKIE_SECURE"
   set_env "$PENV" SPEEDTEST_DOWNLOAD_URL "$SPEED_DL"
   set_env "$PENV" SPEEDTEST_UPLOAD_BASE "http://$PORTAL_IP:$PORTAL_PORTA/speedtest/upload"

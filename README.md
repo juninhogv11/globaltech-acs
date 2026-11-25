@@ -141,6 +141,10 @@ cd /opt/genieacs && runuser -u genieacs -- node ext/hubsoft --testar            
 cd /opt/genieacs && runuser -u genieacs -- node ext/hubsoft --testar TPLG12345678 # busca por serial (ou MAC)
 ```
 
+Com Hubsoft, o botão **"Alterar Wi-Fi"** do portal também grava o Wi-Fi na Documentação de Senhas do serviço
+("Wi-Fi" e "Wi-Fi 5G"; edita a linha existente em vez de criar outra), se o `.env` do portal tiver os `HUBSOFT_*`
+(o instalador copia). O aviso depois de salvar diz se gravou no Hubsoft; o log do portal registra o resultado (sem senhas).
+
 No portal, `SISTEMA_NOME` muda o nome mostrado ("Cliente Hubsoft", "Erro no Hubsoft") e `CLIENTE_URL`
 (com `{id}`) define o link para abrir o cliente.
 
