@@ -718,8 +718,10 @@ async function coletar(forcar = false) {
   const agora = new Date().toISOString();
   // ONUs ligadas a aparelhos do ACS (as únicas que ganham gráfico de sinal/tráfego)
   const vinc = new Set();
+  // RX que o próprio aparelho informa ao ACS (TR-069): usado no gráfico quando a OLT não mede (Cianet EPON)
+  const rxAcs = {};
   if (aparelhosFn) {
-    try { for (const d of await aparelhosFn()) { const k = acharOnu(d); if (k) vinc.add(k.key); } }
+    try { for (const d of await aparelhosFn()) { const k = acharOnu(d); if (k) { vinc.add(k.key); if (d.rx != null) rxAcs[k.key] = d.rx; } } }
     catch (e) { console.error("coleta OLT: lista de aparelhos:", e.message); }
   }
   try {
@@ -755,7 +757,12 @@ async function coletar(forcar = false) {
         // Tempo ligada (para o quadro do dashboard). V-SOL fica de fora: o agente SNMP dela trava.
         if (extra.via === "snmp") { const s = await tempoLigada(o); if (s != null) extra.ligadoSeg = s; }
         extra.segundos = Math.round((Date.now() - t0) / 100) / 10;
-        for (const x of onus) { const key = `${o.id}|${x.index}`; if (vinc.has(key)) registrarSerie(key, agora, x); }
+        for (const x of onus) {
+          const key = `${o.id}|${x.index}`;
+          if (!vinc.has(key)) continue;
+          if (o.tipo === "cianet_epon" && x.online && rxAcs[key] != null && !(x.medida && x.medida.rx != null)) x.medida = { ...(x.medida || {}), rx: rxAcs[key], lado: "onu" };
+          registrarSerie(key, agora, x);
+        }
         const vistos = new Set();
         for (const x of onus) {
           const key = `${o.id}|${x.index}`;

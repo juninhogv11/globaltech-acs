@@ -6,8 +6,11 @@ const { ONLINE_MINUTES } = require("./env");
 // Potência óptica em décimos de µW: TP-Link XX530v (TR-181) e ONUs padrão China Telecom (TR-098 "X_CT-COM",
 // ex.: Realtek FW323DAC — conferido 25/11/2026: RX 16 = -27,96 dBm, igual ao que a OLT FiberHome mediu)
 const CTCOM_GPON = "InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig";
-const RX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.RXPower", `${CTCOM_GPON}.RXPower`];
-const TX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.TXPower", `${CTCOM_GPON}.TXPower`];
+// ONUs EPON padrão China Telecom (ex.: OLT Cianet EPON, que não informa o RX por SNMP). Mesmo formato do GPON;
+// ainda não conferido num aparelho real (26/11/2026: nenhuma ONU da Cianet informando ao ACS da Superi).
+const CTCOM_EPON = "InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig";
+const RX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.RXPower", `${CTCOM_GPON}.RXPower`, `${CTCOM_EPON}.RXPower`];
+const TX_PATHS = ["Device.Optical.Interface.1.X_TP_GPON_Config.TXPower", `${CTCOM_GPON}.TXPower`, `${CTCOM_EPON}.TXPower`];
 // Nome do Wi-Fi: o "SSID" nem sempre é calculado pela provision; SSID24/SSID58 servem de reserva
 const SSID_PATHS = ["VirtualParameters.SSID", "VirtualParameters.SSID24", "VirtualParameters.SSID58"];
 
@@ -134,7 +137,7 @@ function normalize(doc) {
     online,
     uptime: uptimeNow(doc, online),
     // Tem fibra (ONU/ONT)? MikroTik e roteadores TR-098 comuns não têm Device.Optical nem X_CT-COM_GponInterfaceConfig
-    hasOptical: rx !== null || !!get(doc, "Device.Optical.Interface.1") || !!get(doc, CTCOM_GPON),
+    hasOptical: rx !== null || !!get(doc, "Device.Optical.Interface.1") || !!get(doc, CTCOM_GPON) || !!get(doc, CTCOM_EPON),
     // Gravados pela provision_ipoe como tags SGP_CLIENTE_<id> / SGP_CONTRATO_<id>
     sgpCliente: sgpTag(doc._tags, "CLIENTE"),
     sgpContrato: sgpTag(doc._tags, "CONTRATO"),

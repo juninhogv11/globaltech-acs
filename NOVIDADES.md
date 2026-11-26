@@ -4,6 +4,12 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.26-5 — Sinal das ONUs EPON pelo ACS
+
+- O medidor "ONU Rx" da página do aparelho passa a ler também o sinal das ONUs **EPON** padrão China Telecom (além das
+  GPON). Para as ONUs da OLT Cianet, que não informa o sinal, o gráfico "Sinal e estado" usa esse valor lido pelo ACS.
+- Vale para os aparelhos que informam ao ACS; o primeiro valor aparece em até 10 minutos depois da atualização.
+
 ## v2026.11.26-4 — OLT Cianet EPON (4 PON)
 
 - **Novo tipo de OLT: Cianet EPON (4 PON)**, lido por SNMP (cadastre a community). Mostra as ONUs online e as offline
