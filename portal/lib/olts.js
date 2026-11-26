@@ -18,9 +18,15 @@ const TIPOS = {
   zte_c220: "ZTE C220",
   fh_an5516: "FiberHome AN5516",
   fh_an6000: "FiberHome AN6000",
+  huawei_ma5608t: "Huawei MA5608T",
+  huawei_ma5800_x2: "Huawei MA5800-X2",
+  huawei_ma5800_x15: "Huawei MA5800-X15",
+  huawei_ma5800_x17: "Huawei MA5800-X17",
 };
-// Tipos que entram com prompt de usuário (">") e pedem "enable" com a senha admin
-const COM_ENABLE = new Set(["vsol", "fh_an5516", "fh_an6000"]);
+// Huawei MA5600T/MA5800: todos os modelos usam a mesma MIB (HUAWEI-XPON-MIB) e a mesma CLI
+const ehHuawei = (tipo) => String(tipo || "").startsWith("huawei_");
+// Tipos que entram com prompt de usuário (">") e pedem "enable" com a senha admin (a Huawei entra sem senha)
+const COM_ENABLE = new Set(["vsol", "fh_an5516", "fh_an6000", ...Object.keys(TIPOS).filter(ehHuawei)]);
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
 function chave() {
@@ -146,7 +152,7 @@ async function testar(id) {
 }
 
 // Comandos SOMENTE de leitura (para levantar o formato das saídas de cada fabricante)
-const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+)$/i; // "cd": navegação da CLI FiberHome AN5516
+const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+|scroll( \d+)?)$/i; // "cd": CLI FiberHome AN5516; "scroll": paginação Huawei
 async function lerComandos(id, comandos) {
   const o = buscar(id);
   const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 40);
@@ -192,4 +198,4 @@ async function snmpGetLote(id, oids) {
   });
 }
 
-module.exports = { TIPOS, listar, salvar, remover, testar, lerComandos, snmpWalk, snmpColunas, snmpGetLote };
+module.exports = { TIPOS, ehHuawei, listar, salvar, remover, testar, lerComandos, snmpWalk, snmpColunas, snmpGetLote };

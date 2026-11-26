@@ -8,7 +8,7 @@ const LOGIN_RE = /(user ?name|login|usuario|user)\s*:\s*$/i;
 const PASS_RE = /pass ?word\s*:\s*$/i;
 // Fim de prompt com 1 ou 2 símbolos (Nokia ISAM: "typ:isadmin>#")
 const PROMPT_RE = /[\w\-.:()\/@\[\] ]{1,60}[>#$%]{1,2}\s*$/;
-const MORE_RE = /(-+ ?more ?-+|--more--|press any key|<--- more --->|\[more\]|---- more ----)[^\n]*$/i;
+const MORE_RE = /(-+ ?more ?-+|--more--|press any key|<--- more --->|\[more\]|---- more ----|-+ ?more \( ?press 'q' to break ?\) ?-+)[^\n]*$/i;
 const FALHA_RE = /(login incorrect|authentication failed|invalid (user|password|login)|access denied|bad password|login failed|% ?authentication)/i;
 
 class Sessao {

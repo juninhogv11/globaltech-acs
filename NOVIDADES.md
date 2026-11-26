@@ -4,6 +4,13 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-6 — OLTs Huawei
+
+- **OLTs novas:** Huawei MA5608T, MA5800-X2, MA5800-X15 e MA5800-X17 (ONUs online, sem energia, sem fibra com o motivo da
+  queda, sinal, temperatura das placas e tempo ligada). Lidas por SNMP: cadastre a community. Ainda precisam ser conferidas
+  num equipamento real.
+- ONTs Huawei são ligadas ao aparelho do ACS pelo serial (ex.: `HWTC1A2B3C4D` na OLT = `485754431A2B3C4D` no ACS).
+
 ## v2026.11.25-5 — ACS em servidor separado atualiza junto com o portal
 
 - Quando o ACS fica em outro servidor, ele agora segue a versão do portal: depois de atualizar pelo botão do portal, o ACS

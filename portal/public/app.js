@@ -1562,7 +1562,7 @@ async function pageOlts() {
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP com Telnet de reserva, V-SOL por Telnet, FiberHome só por SNMP)</th><th></th></tr></thead>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP com Telnet de reserva, V-SOL por Telnet, FiberHome e Huawei só por SNMP)</th><th></th></tr></thead>
       <tbody>${olts.map((o) => `<tr>
         <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
@@ -1618,7 +1618,7 @@ function oltForm(o, tipos) {
     </div>
     <label>SNMP community<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
     <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.
-      FiberHome é lida só por SNMP (community obrigatória); ZTE C220 usa SNMP com Telnet de reserva.</p>
+      FiberHome e Huawei são lidas só por SNMP (community obrigatória); ZTE C220 usa SNMP com Telnet de reserva.</p>
     <div class="fw-actions"><button class="btn" value="cancel" type="submit">Cancelar</button><button class="btn primary" value="ok" type="submit">Salvar</button></div>
   </form>`;
   document.body.appendChild(dlg);

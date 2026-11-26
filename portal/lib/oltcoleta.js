@@ -5,6 +5,7 @@
 //   Nokia ISAM: show equipment ont status pon + operational-data (down-reason)
 //   ZTE C220:   SNMP (árvore antiga 3902.1012) com Telnet de reserva (show gpon onu state, nomes "gpon-onu_1/2/1:1")
 //   FiberHome AN5516/AN6000: só SNMP (5875.800.3.10.1.1, tabela de ONUs autorizadas)
+//   Huawei MA5608T / MA5800-X2/X15/X17: só SNMP (HUAWEI-XPON-MIB 2011.6.128.1.1.2), feito SEM OLT real
 //   Os 3 últimos foram feitos SEM OLT real (25/11/2026): ver HISTORICO.md o que falta conferir.
 // Guarda em data/olt-onus.json: estado atual de cada ONU e histórico de quedas (45 dias).
 const fs = require("fs");
@@ -326,6 +327,68 @@ async function coletarFhSnmp(o) {
   });
 }
 
+// ---------- Huawei MA5608T / MA5800-X2/X15/X17 (HUAWEI-XPON-MIB, enterprise 2011) ----------
+// Conferido na MIB (mibs.observium.org, 25/11/2026), SEM OLT real. Tabelas indexadas por .<ifIndex da PON>.<id da ONT>:
+//   serial 2011.6.128.1.1.2.43.1.3 (8 bytes "HWTC"+4 bytes), estado 46.1.15 (1 up, 2 down, -1 sem leitura),
+//   última causa de queda 46.1.24 (1 LOS, 2 LOSi/LOBi, 3 LOFi, 4 SFi, 5 LOAi, 6 LOAMi, 9 reset, 13 dying-gasp ...),
+//   RX na ONT 51.1.4 (centésimos de dBm); RX da ONT na OLT 51.1.6 (dBm = (valor - 10000) / 100).
+//   Porta PON: nome pelo ifDescr ("GPON 0/1/0"); reserva: ifIndex = 0xFA000000 + quadro·2^18 + slot·2^13 + porta·2^8.
+//   Temperatura das placas: 2011.2.6.7.1.1.2.1.10 (°C).
+const HW_OID = {
+  sn: "1.3.6.1.4.1.2011.6.128.1.1.2.43.1.3",
+  estado: "1.3.6.1.4.1.2011.6.128.1.1.2.46.1.15",
+  causa: "1.3.6.1.4.1.2011.6.128.1.1.2.46.1.24",
+};
+const HW_RX_ONT = "1.3.6.1.4.1.2011.6.128.1.1.2.51.1.4";
+const HW_RX_OLT = "1.3.6.1.4.1.2011.6.128.1.1.2.51.1.6";
+const HW_TEMP = "1.3.6.1.4.1.2011.2.6.7.1.1.2.1.10";
+const HW_CAUSA = {
+  1: "LOS", 2: "LOSi", 3: "LOFi", 4: "SFi", 5: "LOAi", 6: "LOAMi", 7: "desativar falhou", 8: "desativada", 9: "reset",
+  10: "re-registro", 11: "pop up fail", 13: "dying-gasp", 15: "LOKi", 18: "desativada (anel)", 30: "laser desligado",
+  31: "reset por comando", 32: "reset pelo botão", 33: "reset pelo software", 34: "desativada (ataque broadcast)",
+  35: "operator check fail", 37: "ONT rogue",
+};
+function hwPon(ifx) {
+  const r = Number(ifx) - 0xfa000000;
+  if (!(r >= 0)) return String(ifx);
+  return `${r >>> 18}/${(r >>> 13) & 0x1f}/${(r >>> 8) & 0x1f}`;
+}
+// Nome das PONs pelo IF-MIB (guardado 1 dia por OLT)
+const hwPons = {};
+async function nomesPonHw(o, ifxs) {
+  const c = hwPons[o.id] && Date.now() - hwPons[o.id].em < 86400000 ? hwPons[o.id] : (hwPons[o.id] = { em: Date.now(), nomes: {} });
+  const falta = ifxs.filter((x) => !(x in c.nomes));
+  if (falta.length) {
+    try {
+      for (const vb of await olts.snmpGetLote(o.id, falta.map((x) => `1.3.6.1.2.1.2.2.1.2.${x}`))) {
+        const m = String(vb.value || "").match(/(\d+)\/(\d+)\/(\d+)/);
+        c.nomes[ultimo(vb.oid).pop()] = m ? `${m[1]}/${m[2]}/${m[3]}` : null;
+      }
+    } catch {}
+    for (const x of falta) if (!c.nomes[x]) c.nomes[x] = hwPon(x);
+  }
+  return c.nomes;
+}
+async function coletarHuaweiSnmp(o) {
+  const t = await olts.snmpColunas(o.id, Object.values(HW_OID));
+  const por = {};
+  for (const [nome, oid] of Object.entries(HW_OID)) for (const vb of t[oid]) {
+    const p = vb.oid.slice(oid.length + 1).split(".");
+    if (p.length !== 2) continue;
+    const k = `${p[0]}.${p[1]}`;
+    (por[k] = por[k] || { ifx: p[0], ont: p[1], ref: k })[nome] = vb.value;
+  }
+  const lista = Object.values(por).filter((x) => x.estado !== undefined);
+  const nomes = await nomesPonHw(o, [...new Set(lista.map((x) => x.ifx))]);
+  return lista.map((x) => {
+    const online = Number(x.estado) === 1;
+    const motivo = HW_CAUSA[x.causa] || (Number(x.causa) > 0 ? `código ${x.causa}` : null);
+    const causa = online ? null : Number(x.causa) === 13 ? "energia" : [1, 2, 3, 4, 5, 6, 15].includes(Number(x.causa)) ? "fibra" : "outro";
+    return { index: `${nomes[x.ifx] || hwPon(x.ifx)}:${x.ont}`, ref: x.ref, sn: snDeHex(x.sn), online,
+      estadoOlt: online ? "online" : Number(x.estado) === 2 ? "offline" : "sem leitura", causa, motivo: online ? null : motivo };
+  });
+}
+
 // ---------- Sinal e tráfego das ONUs ligadas a aparelhos do ACS ----------
 // Guardado em data/olt-series.json: um ponto por coleta (10 min), 7 dias.
 //   ZTE (SNMP):  RX na OLT 500.1.2.4.2.1.2 (milésimos de dBm; -80000 = sem sinal);
@@ -369,6 +432,15 @@ async function medirSnmp(o, onus, vinc) {
   } else if (o.tipo === "fh_an5516" || o.tipo === "fh_an6000") {
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `${FH_RX}.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
     for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: Number.isFinite(rx) && rx > -5000 && rx < 1000 && rx !== 0 ? rx / 100 : null, lado: "onu" }; }
+  } else if (olts.ehHuawei(o.tipo)) {
+    // RX na ONT; se ela não informar, o RX da ONT medido na OLT
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.flatMap((x) => [`${HW_RX_ONT}.${x.ref}`, `${HW_RX_OLT}.${x.ref}`]))) v[vb.oid] = vb.value;
+    for (const x of alvo) {
+      const a = Number(v[`${HW_RX_ONT}.${x.ref}`]), b = Number(v[`${HW_RX_OLT}.${x.ref}`]);
+      const ont = Number.isFinite(a) && a > -5000 && a < 1000 && a !== 0 ? a / 100 : null;
+      const olt = Number.isFinite(b) && b > 5000 && b < 11000 ? Math.round(b - 10000) / 100 : null;
+      x.medida = ont != null ? { rx: ont, lado: "onu" } : { rx: olt, lado: olt != null ? "olt" : "onu" };
+    }
   }
 }
 function registrarSerie(key, agora, x) {
@@ -539,6 +611,14 @@ async function statusFh(o) {
   if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
   return out;
 }
+// Huawei: temperatura de cada placa (SNMP 2011.2.6.7.1.1.2.1.10, °C; placa vazia volta 0 ou 2147483647)
+async function statusHuawei(o) {
+  const t = await olts.snmpColunas(o.id, [HW_TEMP], 100);
+  const out = { nivel: "ok", pontos: [] };
+  for (const vb of t[HW_TEMP]) if (typeof vb.value === "number" && vb.value > 0 && vb.value < 120) out.pontos.push({ nome: `placa ${vb.oid.slice(HW_TEMP.length + 1).replace(/^0\./, "")}`, temp: vb.value });
+  if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
+  return out;
+}
 async function lerStatus(o, c) {
   const agora = new Date().toISOString();
   try {
@@ -548,6 +628,7 @@ async function lerStatus(o, c) {
     else if (o.tipo === "vsol") s = await statusVsol(o);
     else if (o.tipo === "zte_c220") s = await statusZteC220(o);
     else if ((o.tipo === "fh_an5516" || o.tipo === "fh_an6000") && o.temCommunity) s = await statusFh(o);
+    else if (olts.ehHuawei(o.tipo) && o.temCommunity) s = await statusHuawei(o);
     else return;
     // Tempo ligada lido pelo SNMP na coleta vale quando a leitura própria não trouxe
     if (s.ligadoSeg == null && c.ligadoSeg != null) s.ligadoSeg = c.ligadoSeg;
@@ -560,6 +641,7 @@ async function lerStatus(o, c) {
 
 // Leitura por SNMP de cada tipo (os outros só por Telnet)
 const COLETA_SNMP = { zte: coletarZteSnmp, nokia: coletarNokiaSnmp, zte_c220: coletarZteC220Snmp, fh_an5516: coletarFhSnmp, fh_an6000: coletarFhSnmp };
+for (const t of Object.keys(olts.TIPOS)) if (olts.ehHuawei(t)) COLETA_SNMP[t] = coletarHuaweiSnmp;
 // Quem informa tráfego por ONU (gráfico da página do dispositivo)
 const COM_TRAFEGO = new Set(["zte", "vsol"]);
 
@@ -605,6 +687,7 @@ async function coletar(forcar = false) {
           else if (o.tipo === "nokia") onus = await coletarNokia(o);
           else if (o.tipo === "zte_c220") onus = await coletarZteC220(o);
           else if (o.tipo === "fh_an5516" || o.tipo === "fh_an6000") throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a FiberHome é lida só por SNMP` : "a FiberHome é lida só por SNMP: cadastre a community");
+          else if (olts.ehHuawei(o.tipo)) throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a Huawei é lida só por SNMP` : "a Huawei é lida só por SNMP: cadastre a community");
           else continue;
           extra.via = "telnet";
         }
@@ -661,6 +744,11 @@ function acharOnu(device) {
   const serial = normSn(device.serial);
   const candidatos = Object.entries(db.onus);
   for (const [k, x] of candidatos) if (x.sn && (x.sn === serial || (mac.length === 12 && x.sn === "TPLG" + mac.slice(4).toUpperCase()))) return { key: k, ...x };
+  // Huawei (e outras): serial TR-069 com o fabricante em hexa — "HWTC1A2B3C4D" na OLT = "485754431A2B3C4D" no ACS
+  if (/^[0-9A-F]{16}$/.test(serial)) {
+    const sn = Buffer.from(serial.slice(0, 8), "hex").toString("latin1") + serial.slice(8);
+    if (/^[A-Z0-9]{4}/.test(sn)) for (const [k, x] of candidatos) if (x.sn === sn) return { key: k, ...x };
+  }
   // Realtek (ex.: FW323DAC): serial TR-069 "12345006D61AAAFE0" e serial GPON "GPON00AAAFE0" -> a parte hexa do
   // serial GPON, sem os zeros à esquerda, é o fim do serial TR-069 (conferido 25/11/2026 pelo RX na OLT FiberHome)
   if (serial.length >= 12) {
