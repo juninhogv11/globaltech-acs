@@ -59,6 +59,7 @@ aplicar() {
   if bash "$rel/atualizador/aplicar.sh" "$rel" "$v" "$de" >>"$VAR/execucao.log" 2>&1; then
     EST set anterior "\"$de\""
     EST set instalada "\"$v\""
+    EST podar || true
     EST set commit "\"$commit\""
     # Atualizador e serviços também vêm da versão nova
     bash "$rel/atualizador/instalar-atualizador.sh" --so-arquivos >>"$VAR/execucao.log" 2>&1 || EST passo "Aviso: não atualizei os arquivos do próprio atualizador"

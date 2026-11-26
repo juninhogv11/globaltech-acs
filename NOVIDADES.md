@@ -4,6 +4,12 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.26-2 — Correção: página Atualizações logo depois de atualizar
+
+- Logo depois de uma atualização, a página podia continuar mostrando o botão "Atualizar para" a versão que acabou de ser
+  instalada; clicando, aparecia "Versão inválida ou não disponível". Agora a versão instalada sai da lista na hora e a página
+  confere de novo nos segundos seguintes.
+
 ## v2026.11.26 — Conferir instalação e atualização automática
 
 - **Nova página Configuração → Conferir instalação** (como o "validate" do LibreNMS): mostra o que está certo e o que precisa

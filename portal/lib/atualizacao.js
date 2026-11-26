@@ -84,6 +84,7 @@ function pedir(p, usuario) {
   const pedido = { acao: p.acao, usuario, em: new Date().toISOString() };
   if (p.acao === "aplicar") {
     const v = String(p.versao || "");
+    if (v !== "main" && (v === env.VERSAO || v === e.instalada)) throw bad(`A versão ${v} já está instalada. Recarregue a página.`, 409);
     const ok = (VERSAO_RE.test(v) || (v === "main" && e.canal === "teste")) && (e.disponiveis || []).some((d) => d.versao === v);
     if (!ok) throw bad("Versão inválida ou não disponível. Clique em \"Verificar agora\".");
     pedido.versao = v;

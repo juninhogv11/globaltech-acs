@@ -121,6 +121,11 @@ function logar(texto) {
     gravar(EST, e);
   } else if (cmd === "compara") {
     console.log(compara(a, b));
+  } else if (cmd === "podar") {
+    // Logo depois de instalar: tira da lista as versões que não são mais novas que a instalada (o portal não oferece de novo)
+    const e = ler(EST, {});
+    e.disponiveis = (e.disponiveis || []).filter((d) => d.versao === "main" || compara(d.versao, e.instalada || "dev") > 0);
+    gravar(EST, e);
   } else if (cmd === "versao-portal") {
     // Versão em que o portal (outro servidor) está: GET <url>/api/saude
     try {

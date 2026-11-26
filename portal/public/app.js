@@ -1688,7 +1688,8 @@ async function pageAtualizacoes() {
     const x = r.execucao;
     const rodando = !!(x && x.estado === "rodando") || r.pedidoPendente;
     const pode = r.podeAtualizar && r.instalado && !rodando;
-    const disp = r.disponiveis || [];
+    // Logo depois de instalar, a lista pode ainda trazer a versão que acabou de entrar: nunca oferece a que está rodando
+    const disp = (r.disponiveis || []).filter((d) => d.versao === "main" || (d.versao !== r.versaoPortal && d.versao !== r.versao));
     // ACS em outro servidor: ele segue a versão do portal (confere a cada 2 min) e manda o estado para cá
     const a = r.acsSeparado;
     const ax = a && a.execucao;
@@ -1793,7 +1794,9 @@ async function pageAtualizacoes() {
     clearInterval(pageTimer);
     // ACS atrás do portal: confere a cada 10 s até ele terminar
     const acsAtras = a && /^v\d/.test(r.versao) && a.instalada !== r.versao && a.seguirFalhou !== r.versao;
-    pageTimer = setInterval(render, rodando || acsRodando ? 3000 : acsAtras ? 10000 : 60000);
+    // Acabou de terminar: confere mais algumas vezes (a lista de versões e o histórico são gravados logo depois)
+    const recente = !!(x && x.fim && Date.now() - Date.parse(x.fim) < 30000);
+    pageTimer = setInterval(render, rodando || acsRodando || recente ? 3000 : acsAtras ? 10000 : 60000);
   };
   await render();
 }
