@@ -1095,7 +1095,7 @@ function graficoSvg(pts, series, { ini, fim, fmt, zero = false, passoMs }) {
       if (sozinho) g += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.2" fill="${s.cor}"/>`;
     }
   }
-  return `<svg viewBox="0 0 ${W} ${H}" class="graf-svg" data-ini="${ini}" data-fim="${fim}" data-l="${L}" data-r="${R}" data-w="${W}">${g}
+  return `<svg viewBox="0 0 ${W} ${H}" class="graf-svg" data-series="${series.map((s) => s.key).join(",")}" data-ini="${ini}" data-fim="${fim}" data-l="${L}" data-r="${R}" data-w="${W}">${g}
     <line class="graf-cursor" x1="0" x2="0" y1="${T}" y2="${H - B}" style="display:none"/></svg>`;
 }
 
@@ -1150,7 +1150,9 @@ async function loadSinal(id) {
     <p class="muted" style="font-size:12px;margin:10px 0 0">${pts.length ? "Tráfego = média de cada intervalo de 10 min (picos curtos ficam menores que o real)." : "O histórico começa a ser gravado agora: o primeiro ponto aparece na próxima leitura da OLT (até 10 min)."} Guardado por 7 dias.</p>`;
   card.querySelectorAll("[data-horas]").forEach((b) => b.addEventListener("click", () => { sinalHoras = Number(b.dataset.horas); loadSinal(id); }));
   // Cursor: mostra os valores do ponto mais perto
+  // Cada gráfico mostra só os seus valores: tráfego (download/upload) ou sinal (RX e estado)
   card.querySelectorAll(".graf-svg").forEach((svg) => {
+    const eTrafego = /(^|,)down(,|$)/.test(svg.dataset.series || "");
     const box = svg.parentElement;
     const dica = document.createElement("div"); dica.className = "graf-dica"; box.appendChild(dica);
     const cur = svg.querySelector(".graf-cursor");
@@ -1164,7 +1166,7 @@ async function loadSinal(id) {
       const bx = L + ((Date.parse(best.t) - ini) / (fim - ini)) * (W - L - R);
       cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.style.display = "";
       dica.innerHTML = `<b>${esc(new Date(best.t).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</b><br>
-        ${r.temTrafego ? `Download ${fmtBps(best.down)} · Upload ${fmtBps(best.up)}<br>` : ""}RX ${fmtDbm(best.rx)} · ${ST_NOME[best.st] || best.st}`;
+        ${eTrafego ? `Download ${fmtBps(best.down)} · Upload ${fmtBps(best.up)}` : `RX ${fmtDbm(best.rx)} · ${ST_NOME[best.st] || best.st}`}`;
       dica.style.display = "block";
       const left = (bx / W) * rc.width;
       dica.style.left = `${Math.min(Math.max(left - 90, 0), rc.width - 180)}px`;

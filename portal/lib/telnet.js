@@ -71,15 +71,16 @@ class Sessao {
 // Faz login; devolve a sessão aberta e o prompt
 async function login(host, port, usuario, senha, timeout = 15000) {
   const s = new Sessao(host, port, timeout);
-  await s.conectar();
-  const banner = await s.esperar(new RegExp(`${LOGIN_RE.source}|${PASS_RE.source}`, "i"));
-  if (!PASS_RE.test(banner)) {
-    s.enviar(usuario);
-    await s.esperar(PASS_RE);
-  }
-  s.enviar(senha);
-  let t;
+  let banner, t;
+  // Qualquer falha antes do prompt fecha a conexão: sessão pendurada ocupa vaga de Telnet na OLT
   try {
+    await s.conectar();
+    banner = await s.esperar(new RegExp(`${LOGIN_RE.source}|${PASS_RE.source}`, "i"));
+    if (!PASS_RE.test(banner)) {
+      s.enviar(usuario);
+      await s.esperar(PASS_RE);
+    }
+    s.enviar(senha);
     t = await s.esperar(new RegExp(`${PROMPT_RE.source}|${FALHA_RE.source}|${LOGIN_RE.source}`, "i"));
   } catch (e) { s.fechar(); throw e; }
   if (FALHA_RE.test(t) || LOGIN_RE.test(t.trim().split("\n").pop())) { s.fechar(); throw new Error("usuário ou senha recusados pela OLT"); }

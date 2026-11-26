@@ -4,6 +4,14 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.26-3 — Correções: dica do gráfico de sinal e sessões Telnet
+
+- Na página do aparelho, ao passar o mouse no gráfico "Sinal e estado" das OLTs que informam tráfego (ZTE, V-SOL), a dica
+  mostrava também download e upload. Agora cada gráfico mostra só os seus valores: tráfego (download/upload) ou sinal (RX e
+  estado).
+- Leitura das OLTs por Telnet: quando a OLT demorava a mostrar o pedido de usuário ou senha, a conexão ficava aberta até a
+  OLT derrubar, ocupando uma das poucas sessões Telnet dela. Agora o portal fecha a conexão em qualquer falha do login.
+
 ## v2026.11.26-2 — Correção: página Atualizações logo depois de atualizar
 
 - Logo depois de uma atualização, a página podia continuar mostrando o botão "Atualizar para" a versão que acabou de ser
