@@ -96,9 +96,10 @@ api.get("/api/devices/:id", async (req, res) => {
 // Reinício até 60 min depois de um comando de firmware é marcado como "firmware" (a TP-Link não avisa o motivo).
 // doc (opcional): documento do aparelho, para ligar à ONU na OLT e confirmar a causa de cada queda
 async function eventosDe(id, doc) {
-  if (!backup.configured()) return { eventos: [], indisponivel: true };
   let r;
-  try {
+  // Sem a API de backup do ACS não há o log de quedas, mas a ONU na OLT continua sendo procurada
+  if (!backup.configured()) r = { eventos: [], indisponivel: true };
+  else try {
     r = await backup.agent("GET", "/eventos/" + encodeURIComponent(id), undefined, 10000);
     const fj = firmware.history(id) || {};
     const fwAt = Date.parse(fj.at || 0);

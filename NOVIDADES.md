@@ -4,6 +4,15 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-8 — Sinal na OLT e distância na página do aparelho
+
+- O quadro de sinal da página do aparelho mostra agora **ONU Rx** (sinal que chega na ONU) e **OLT Rx** (sinal da ONU que
+  chega na OLT), no lugar do TX da ONU. O OLT Rx vem da OLT: ZTE C610, Huawei e Nokia. V-SOL, FiberHome e ZTE C220 não
+  informam esse valor.
+- A **distância** da ONU até a OLT aparece ao lado do status (ZTE C610, Huawei e V-SOL).
+- Corrigido: em servidor sem o backup do ACS configurado, a página do aparelho dizia "OLT / ONU indisponível agora" mesmo com
+  a ONU encontrada na OLT.
+
 ## v2026.11.25-7 — OLTs Huawei conferidas
 
 - OLTs Huawei conferidas em equipamentos reais (MA5608T, MA5800-X2, X15 e X17): ONUs, motivo da queda, sinal e temperatura

@@ -568,14 +568,17 @@ function fmtUptime(s) {
 
 // Faixas: GPON classe B+ (RX -27 a -8 dBm; TX da ONU 0,5 a 5 dBm)
 const RX_GAUGE = { min: -32, max: -5, zones: [[-32, -27, "bad"], [-27, -24, "warn"], [-24, -8, "good"], [-8, -5, "bad"]] };
-const TX_GAUGE = { min: -2, max: 8, zones: [[-2, 0.5, "bad"], [0.5, 5, "good"], [5, 8, "warn"]] };
+// Sinal da ONU recebido na OLT (1310 nm): receptor da OLT classe B+/C+ (sensibilidade ~ -28 a -30 dBm)
+const OLT_GAUGE = { min: -35, max: -5, zones: [[-35, -29, "bad"], [-29, -26, "warn"], [-26, -8, "good"], [-8, -5, "bad"]] };
 
-function gauge(label, value, g) {
+// vazio: texto no lugar de "dBm" quando não há leitura (ex.: "a OLT não informa")
+function gauge(label, value, g, vazio) {
   const pct = (v) => ((Math.min(g.max, Math.max(g.min, v)) - g.min) / (g.max - g.min)) * 100;
+  if (value === undefined) value = null;
   const zone = value === null ? "none" : (g.zones.find(([a, b]) => value >= a && value <= b) || [0, 0, "bad"])[2];
   return `<div class="gauge">
     <small>${label}</small>
-    <b class="${zone}">${value === null ? "—" : value.toFixed(2)} <span>dBm</span></b>
+    <b class="${zone}">${value === null ? "—" : value.toFixed(2)} <span>${value === null && vazio ? esc(vazio) : "dBm"}</span></b>
     <div class="gauge-bar">
       ${g.zones.map(([a, b, z]) => `<i class="${z}" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%"></i>`).join("")}
       ${value === null ? "" : `<em style="left:${pct(value)}%"></em>`}
@@ -725,12 +728,12 @@ async function pageDevice(id) {
         <div class="status-box">
           <div class="status-line">${statusBadge(d)}
             <span class="muted">${d.online ? (d.uptime !== null ? "ligado há " + fmtUptime(d.uptime) : "") : "último contato " + timeAgo(d.lastInform)}</span>
-            ${provBadge(d)}</div>
+            ${provBadge(d)}<span id="onu-dist" class="muted" style="margin-left:auto"></span></div>
           ${!d.hasOptical
             ? `<div class="muted">Este equipamento é um roteador sem fibra (sem interface óptica); o sinal óptico fica na ONU/ONT que está antes dele.</div>`
             : `<div class="gauges">
             ${gauge("ONU Rx 1490nm", d.rx, RX_GAUGE)}
-            ${gauge("ONU Tx 1310nm", d.tx, TX_GAUGE)}
+            <div id="gauge-olt">${gauge("OLT Rx 1310nm", null, OLT_GAUGE, "lendo a OLT…")}</div>
           </div>`}
         </div>
         <div class="tags-box">
@@ -997,7 +1000,15 @@ async function loadEventos(id) {
     ? `<b>OLT ${esc(onu.oltNome)}</b> · ONU <code>${esc(onu.index)}</code>${onu.sn ? ` · ${esc(onu.sn)}` : ""}
         <div style="margin-top:4px">${onu.online ? `<span class="badge good"><span class="dot"></span>online na OLT</span>` : `<span class="badge bad"><span class="dot"></span>${esc(onu.causa === "energia" ? "sem energia (dying gasp)" : onu.causa === "fibra" ? "sem fibra (LOS)" : onu.estadoOlt)}</span>`}
         ${onu.rx ? ` <span class="muted">· RX ${onu.rx} dBm</span>` : ""} <span class="muted">· lido ${timeAgo(onu.visto)}</span></div>`
-    : `<span class="muted">${r.indisponivel ? "indisponível agora" : "não encontrada nas OLTs cadastradas"}</span>`;
+    : `<span class="muted">${r.erroOlt ? "indisponível agora" : "não encontrada nas OLTs cadastradas"}</span>`;
+  // Quadro de sinal: RX da ONU medido na OLT e distância (quando a OLT informa)
+  const go = $("#gauge-olt");
+  if (go) {
+    const semLeitura = !onu ? "sem OLT" : onu.rxOlt == null ? (["vsol", "fh_an5516", "fh_an6000", "zte_c220"].includes(onu.oltTipo) ? "a OLT não informa" : "aguardando leitura") : "";
+    go.innerHTML = gauge("OLT Rx 1310nm", onu ? onu.rxOlt : null, OLT_GAUGE, semLeitura);
+  }
+  const dist = $("#onu-dist");
+  if (dist && onu && onu.distancia) dist.textContent = onu.distancia >= 1000 ? `${(onu.distancia / 1000).toFixed(2).replace(".", ",")} km` : `${onu.distancia} m`;
   card.innerHTML = `
     <div class="card-head"><h2>Quedas e reinícios</h2>
       <span class="muted">${r.indisponivel ? "histórico indisponível agora" : `últimos 7 dias: ${n("religou")} religou · ${n("rede")} fibra/OLT · ${n("acs") + n("firmware")} pedidos pelo ACS`}</span></div>

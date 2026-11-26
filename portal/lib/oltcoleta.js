@@ -97,13 +97,16 @@ async function coletarVsol(o, vinc = new Set()) {
   const dataOlt = (s) => (/^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d$/.test(s) ? Date.parse(s.replace(/\//g, "-").replace(" ", "T") + "-03:00") : null);
   for (const s of r.saidas.filter((x) => x.comando === "show onu status")) {
     for (const l of s.saida.split("\n")) {
-      const m = l.trim().match(/^EPON(\S+):(\d+)\s+(online|offline)\s+(\S+)\s+\S+\s+\S+\s+(N\/A|\d{4}\/\S+ \S+)\s+(N\/A|\d{4}\/\S+ \S+)\s+(\S.*?)\s+(\d+:\d\d:\d\d)/i); // motivo pode ter espaço ("Power Off")
+      // ONU-ID Status MAC Distance(m) RTT(TQ) LastRegTime LastDeregTime LastDeregReason AliveTime
+      const m = l.trim().match(/^EPON(\S+):(\d+)\s+(online|offline)\s+(\S+)\s+(\S+)\s+\S+\s+(N\/A|\d{4}\/\S+ \S+)\s+(N\/A|\d{4}\/\S+ \S+)\s+(\S.*?)\s+(\d+:\d\d:\d\d)/i); // motivo pode ter espaço ("Power Off")
       if (!m) continue;
-      const reg = dataOlt(m[5]);
-      const [hh, mm, ss] = m[8].split(":").map(Number);
+      const reg = dataOlt(m[6]);
+      const [hh, mm, ss] = m[9].split(":").map(Number);
       if (m[3] === "online" && reg && offset === null) offset = reg + (hh * 3600 + mm * 60 + ss) * 1000 - Date.now();
+      const dist = Number(m[5]);
       onus.push({ index: `${m[1]}:${m[2]}`, mac: normMac(m[4]), online: m[3] === "online", estadoOlt: m[3],
-        causa: m[3] === "online" ? null : causaDe(m[7]) || "outro", ultimaQuedaOlt: dataOlt(m[6]), motivo: m[7] === "N/A" ? null : m[7] });
+        distancia: m[3] === "online" && dist > 0 && dist < 100000 ? dist : null,
+        causa: m[3] === "online" ? null : causaDe(m[8]) || "outro", ultimaQuedaOlt: dataOlt(m[7]), motivo: m[8] === "N/A" ? null : m[8] });
     }
   }
   // Sinal (RX da ONU, dBm) e contadores de bytes. rx_good = recebido pela OLT (upload); tx_good = enviado (download)
@@ -342,6 +345,7 @@ const HW_OID = {
 };
 const HW_RX_ONT = "1.3.6.1.4.1.2011.6.128.1.1.2.51.1.4";
 const HW_RX_OLT = "1.3.6.1.4.1.2011.6.128.1.1.2.51.1.6";
+const HW_DIST = "1.3.6.1.4.1.2011.6.128.1.1.2.46.1.20";
 const HW_TEMP = "1.3.6.1.4.1.2011.2.6.7.1.1.2.1.10";
 const HW_CAUSA = {
   1: "LOS", 2: "LOSi", 3: "LOFi", 4: "SFi", 5: "LOAi", 6: "LOAMi", 7: "desativar falhou", 8: "desativada", 9: "reset",
@@ -412,17 +416,20 @@ async function medirSnmp(o, onus, vinc) {
   const alvo = onus.filter((x) => x.ref != null && vinc.has(`${o.id}|${x.index}`));
   if (!alvo.length) return;
   if (o.tipo === "zte") {
-    const oids = alvo.flatMap((x) => [`1.3.6.1.4.1.3902.1082.500.1.2.4.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.28.${x.ref}`]);
+    // Distância (m) 500.10.2.3.10.1.2: conferida em 25/11/2026 com "show gpon onu detail-info" (ONU Distance: 2261m)
+    const oids = alvo.flatMap((x) => [`1.3.6.1.4.1.3902.1082.500.1.2.4.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.2.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.28.${x.ref}`, `1.3.6.1.4.1.3902.1082.500.10.2.3.10.1.2.${x.ref}`]);
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, oids)) v[vb.oid] = vb.value;
     for (const x of alvo) {
       const rx = Number(v[`1.3.6.1.4.1.3902.1082.500.1.2.4.2.1.2.${x.ref}`]);
       const up = v[`1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.2.${x.ref}`], down = v[`1.3.6.1.4.1.3902.1082.500.10.2.3.2.2.1.28.${x.ref}`];
-      x.medida = { rx: rx > -50000 && rx < 10000 ? Math.round(rx / 10) / 100 : null, lado: "olt",
+      const dist = Number(v[`1.3.6.1.4.1.3902.1082.500.10.2.3.10.1.2.${x.ref}`]);
+      const rxOlt = rx > -50000 && rx < 10000 ? Math.round(rx / 10) / 100 : null;
+      x.medida = { rx: rxOlt, lado: "olt", rxOlt, dist: dist > 0 && dist < 100000 ? dist : null,
         up: typeof up === "number" ? up : null, down: typeof down === "number" ? down : null };
     }
   } else if (o.tipo === "nokia") {
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `1.3.6.1.4.1.637.61.1.35.10.18.1.2.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
-    for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: rx > -500 && rx < 100 ? rx / 10 : null, lado: "olt" }; }
+    for (const x of alvo) { const rx = Number(v[x.ref]); const rxOlt = rx > -500 && rx < 100 ? rx / 10 : null; x.medida = { rx: rxOlt, lado: "olt", rxOlt }; }
   } else if (o.tipo === "zte_c220") {
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `${C220_RX}.${x.ref}.1`))) v[vb.oid] = vb.value;
     for (const x of alvo) {
@@ -434,13 +441,14 @@ async function medirSnmp(o, onus, vinc) {
     const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.map((x) => `${FH_RX}.${x.ref}`))) v[ultimo(vb.oid).pop()] = vb.value;
     for (const x of alvo) { const rx = Number(v[x.ref]); x.medida = { rx: Number.isFinite(rx) && rx > -5000 && rx < 1000 && rx !== 0 ? rx / 100 : null, lado: "onu" }; }
   } else if (olts.ehHuawei(o.tipo)) {
-    // RX na ONT; se ela não informar, o RX da ONT medido na OLT
-    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.flatMap((x) => [`${HW_RX_ONT}.${x.ref}`, `${HW_RX_OLT}.${x.ref}`]))) v[vb.oid] = vb.value;
+    // RX na ONT (gráfico); se ela não informar, o RX da ONT medido na OLT. Distância 46.1.20 (m), conferida com "ONT distance(m)".
+    const v = {}; for (const vb of await olts.snmpGetLote(o.id, alvo.flatMap((x) => [`${HW_RX_ONT}.${x.ref}`, `${HW_RX_OLT}.${x.ref}`, `${HW_DIST}.${x.ref}`]))) v[vb.oid] = vb.value;
     for (const x of alvo) {
-      const a = Number(v[`${HW_RX_ONT}.${x.ref}`]), b = Number(v[`${HW_RX_OLT}.${x.ref}`]);
+      const a = Number(v[`${HW_RX_ONT}.${x.ref}`]), b = Number(v[`${HW_RX_OLT}.${x.ref}`]), d = Number(v[`${HW_DIST}.${x.ref}`]);
       const ont = Number.isFinite(a) && a > -5000 && a < 1000 && a !== 0 ? a / 100 : null;
       const olt = Number.isFinite(b) && b > 5000 && b < 11000 ? Math.round(b - 10000) / 100 : null;
-      x.medida = ont != null ? { rx: ont, lado: "onu" } : { rx: olt, lado: olt != null ? "olt" : "onu" };
+      x.medida = { ...(ont != null ? { rx: ont, lado: "onu" } : { rx: olt, lado: olt != null ? "olt" : "onu" }),
+        rxOlt: olt, dist: d > 0 && d < 100000 ? d : null };
     }
   }
 }
@@ -723,7 +731,9 @@ async function coletar(forcar = false) {
             h.push({ caiu: x.ultimaQueda, voltou: x.online ? agora : null, motivo: x.motivo, causa: causaDe(x.motivo) || "outro", fonte: "olt" });
           }
           db.onus[key] = { olt: o.id, oltNome: o.descricao, oltTipo: o.tipo, index: x.index, sn: x.sn || "", mac: x.mac || "",
-            online: x.online, estadoOlt: x.estadoOlt, causa: x.causa, motivo: x.motivo || null, rx: x.rx ?? null, visto: agora };
+            online: x.online, estadoOlt: x.estadoOlt, causa: x.causa, motivo: x.motivo || null, rx: x.rx ?? null, visto: agora,
+            // RX da ONU medido na OLT e distância (só das ONUs ligadas a aparelhos do ACS; V-SOL informa a distância de todas)
+            rxOlt: (x.medida && x.medida.rxOlt) ?? null, distancia: x.distancia ?? (x.medida && x.medida.dist) ?? null };
         }
         // ONUs que sumiram da OLT
         for (const key of Object.keys(db.onus)) if (key.startsWith(o.id + "|") && !vistos.has(key)) delete db.onus[key];
