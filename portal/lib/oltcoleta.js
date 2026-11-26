@@ -6,6 +6,7 @@
 //   ZTE C220:   SNMP (árvore antiga 3902.1012) com Telnet de reserva (show gpon onu state, nomes "gpon-onu_1/2/1:1")
 //   FiberHome AN5516/AN6000: só SNMP (5875.800.3.10.1.1, tabela de ONUs autorizadas)
 //   Huawei MA5608T / MA5800-X2/X15/X17: só SNMP (HUAWEI-XPON-MIB 2011.6.128.1.1.2), conferido em OLTs reais
+//   Cianet EPON 4 PON: só SNMP (enterprise 34592: lista de MACs autorizados + ONUs registradas), conferido em OLT real
 //   Os 3 últimos foram feitos SEM OLT real (25/11/2026): ver HISTORICO.md o que falta conferir.
 // Guarda em data/olt-onus.json: estado atual de cada ONU e histórico de quedas (45 dias).
 const fs = require("fs");
@@ -328,6 +329,43 @@ async function coletarFhSnmp(o) {
     const mac = /^([0-9a-f]{2}[:\-.]?){5}[0-9a-f]{2}$/i.test(bruto) ? normMac(bruto) : "";
     return { index: fhIndex(x.ifx), ref: x.ifx, sn: mac ? "" : snDeHex(bruto), mac, online, estadoOlt: estado, causa: online ? null : causa };
   });
+}
+
+// ---------- Cianet EPON 4 PON (MIB própria, enterprise 34592; "EPON System", firmware OLT-1.5.27s) ----------
+// Conferido em OLT real (Superi "SERTAO RIO DOCE", 172.16.7.86, 26/11/2026):
+//   ONUs registradas (online) 34592.1.3.3.12.1.1.4.<slot>.<PON>.<ONU> = MAC (12 hex; alguns chegam como bytes);
+//   MACs autorizados 34592.1.3.1.6.3.1.2.<n> (todas as online estão nela: quem está na lista e não registrou = offline).
+//   Não informa por SNMP o motivo da queda nem o sinal (RX); a CLI Telnet só tem "show vlan/trunk".
+const CIANET_ONLINE = "1.3.6.1.4.1.34592.1.3.3.12.1.1.4";
+const CIANET_AUTORIZADOS = "1.3.6.1.4.1.34592.1.3.1.6.3.1.2";
+// MAC em texto hex ou em 6 bytes (o snmp.js devolve como texto quando os bytes formam UTF-8 válido)
+function macCianet(v) {
+  const s = String(v ?? "");
+  if (/^([0-9a-f]{2}[:\-.]?){5}[0-9a-f]{2}$/i.test(s.trim())) return normMac(s);
+  // Sem trim aqui: o último byte do MAC pode ser 0x20 (espaço), ex.: 50:3d:d1:9a:7b:20
+  const b = Buffer.from(s, "utf8");
+  return b.length === 6 ? b.toString("hex") : "";
+}
+async function coletarCianetSnmp(o) {
+  const t = await olts.snmpColunas(o.id, [CIANET_ONLINE, CIANET_AUTORIZADOS]);
+  const onus = [], vistos = new Set();
+  for (const vb of t[CIANET_ONLINE]) {
+    const p = vb.oid.slice(CIANET_ONLINE.length + 1).split(".");
+    const mac = macCianet(vb.value);
+    if (p.length !== 3 || !mac) continue;
+    vistos.add(mac);
+    onus.push({ index: `${p[0]}/${p[1]}:${p[2]}`, mac, sn: "", online: true, estadoOlt: "online", causa: null });
+  }
+  // Offline: autorizada e não registrada. A OLT não diz a porta; usa a posição da última vez que foi vista online.
+  const ant = {};
+  for (const x of Object.values(load().onus)) if (x.olt === o.id && x.mac && !String(x.index).startsWith("?")) ant[x.mac] = x.index;
+  for (const vb of t[CIANET_AUTORIZADOS]) {
+    const mac = macCianet(vb.value);
+    if (!mac || vistos.has(mac)) continue;
+    vistos.add(mac);
+    onus.push({ index: ant[mac] || `?:${mac}`, mac, sn: "", online: false, estadoOlt: "offline", causa: "outro" });
+  }
+  return onus;
 }
 
 // ---------- Huawei MA5608T / MA5800-X2/X15/X17 (HUAWEI-XPON-MIB, enterprise 2011) ----------
@@ -661,7 +699,7 @@ async function lerStatus(o, c) {
 }
 
 // Leitura por SNMP de cada tipo (os outros só por Telnet)
-const COLETA_SNMP = { zte: coletarZteSnmp, nokia: coletarNokiaSnmp, zte_c220: coletarZteC220Snmp, fh_an5516: coletarFhSnmp, fh_an6000: coletarFhSnmp };
+const COLETA_SNMP = { zte: coletarZteSnmp, nokia: coletarNokiaSnmp, zte_c220: coletarZteC220Snmp, fh_an5516: coletarFhSnmp, fh_an6000: coletarFhSnmp, cianet_epon: coletarCianetSnmp };
 for (const t of Object.keys(olts.TIPOS)) if (olts.ehHuawei(t)) COLETA_SNMP[t] = coletarHuaweiSnmp;
 // Quem informa tráfego por ONU (gráfico da página do dispositivo)
 const COM_TRAFEGO = new Set(["zte", "vsol"]);
@@ -709,6 +747,7 @@ async function coletar(forcar = false) {
           else if (o.tipo === "zte_c220") onus = await coletarZteC220(o);
           else if (o.tipo === "fh_an5516" || o.tipo === "fh_an6000") throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a FiberHome é lida só por SNMP` : "a FiberHome é lida só por SNMP: cadastre a community");
           else if (olts.ehHuawei(o.tipo)) throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a Huawei é lida só por SNMP` : "a Huawei é lida só por SNMP: cadastre a community");
+          else if (o.tipo === "cianet_epon") throw new Error(o.temCommunity ? `SNMP falhou (${extra.snmpErro}); a Cianet é lida só por SNMP` : "a Cianet é lida só por SNMP: cadastre a community");
           else continue;
           extra.via = "telnet";
         }

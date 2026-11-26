@@ -4,6 +4,13 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.26-4 — OLT Cianet EPON (4 PON)
+
+- **Novo tipo de OLT: Cianet EPON (4 PON)**, lido por SNMP (cadastre a community). Mostra as ONUs online e as offline
+  (autorizadas na OLT que não estão conectadas). Essa OLT não informa por SNMP o sinal (RX) nem o motivo da queda.
+- **Atenção:** se você já cadastrou a Cianet com outro tipo, edite a OLT na página OLTs, troque o tipo para
+  "Cianet EPON (4 PON)" e clique em "Ler ONUs agora". MACs antigos que continuam autorizados na OLT aparecem como offline.
+
 ## v2026.11.26-3 — Correções: dica do gráfico de sinal e sessões Telnet
 
 - Na página do aparelho, ao passar o mouse no gráfico "Sinal e estado" das OLTs que informam tráfego (ZTE, V-SOL), a dica

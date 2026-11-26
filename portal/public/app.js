@@ -1012,7 +1012,7 @@ async function loadEventos(id) {
   // Quadro de sinal: RX da ONU medido na OLT e distância (quando a OLT informa)
   const go = $("#gauge-olt");
   if (go) {
-    const semLeitura = !onu ? "sem OLT" : onu.rxOlt == null ? (["vsol", "fh_an5516", "fh_an6000", "zte_c220"].includes(onu.oltTipo) ? "a OLT não informa" : "aguardando leitura") : "";
+    const semLeitura = !onu ? "sem OLT" : onu.rxOlt == null ? (["vsol", "fh_an5516", "fh_an6000", "zte_c220", "cianet_epon"].includes(onu.oltTipo) ? "a OLT não informa" : "aguardando leitura") : "";
     go.innerHTML = gauge("OLT Rx 1310nm", onu ? onu.rxOlt : null, OLT_GAUGE, semLeitura);
   }
   const dist = $("#onu-dist");
