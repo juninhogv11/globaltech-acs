@@ -5,6 +5,7 @@
 #   globaltech-atualizar voltar             reinstala a versão anterior
 #   globaltech-atualizar estado             mostra o estado
 #   globaltech-atualizar pedido             executa o pedido deixado pelo portal (chamado pelo systemd)
+#   globaltech-atualizar seguir             ACS separado: instala a versão em que o portal está (timer a cada 2 min)
 # A instalação em si fica em atualizador/aplicar.sh DA VERSÃO NOVA: correções no processo valem já na atualização seguinte.
 set -euo pipefail
 
@@ -74,8 +75,34 @@ aplicar() {
   fi
 }
 
+# ACS em servidor separado do portal: segue a versão do portal (o administrador atualiza o portal pelo botão e o ACS
+# instala a mesma versão em até 2 min). Só avança (nunca volta sozinho) e não repete uma versão que já falhou aqui.
+# Endereço do portal: PORTAL_URL no atualizador.conf ou, se não houver, WIFI_PORTAL_URL do sgp.env.
+url_portal() {
+  local u="${PORTAL_URL:-}"
+  [ -z "$u" ] && u=$(grep -m1 '^WIFI_PORTAL_URL=' "${SGP_ENV:-/opt/genieacs/sgp.env}" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"' \r' || true)
+  echo "${u%/}"
+}
+seguir() {
+  [ "$ACS" = 1 ] && [ "$PORTAL" = 0 ] || return 0
+  local url; url=$(url_portal)
+  [ -n "$url" ] || return 0
+  local pv inst
+  pv=$(EST versao-portal "$url")
+  inst=$(EST get instalada); inst=${inst:-dev}
+  if [ -n "$pv" ] && [ "$(EST compara "$pv" "$inst")" = 1 ] && [ "$(EST get seguirFalhou)" != "$pv" ]; then
+    # Enquanto instala, manda o andamento ao portal a cada 5 s
+    ( exec 9>&-; while sleep 5; do EST relatar "$url" 2>/dev/null; done ) &
+    local rel=$!
+    if aplicar "$pv" "portal (automático)"; then EST set seguirFalhou null; else EST set seguirFalhou "\"$pv\""; fi
+    kill "$rel" 2>/dev/null || true; wait "$rel" 2>/dev/null || true
+  fi
+  EST relatar "$url"
+}
+
 case "${1:-}" in
   verificar) verificar ;;
+  seguir) seguir ;;
   aplicar) aplicar "${2:?informe a versão, ex.: v2026.11.25}" "linha de comando" ;;
   voltar)
     ant=$(EST get anterior)

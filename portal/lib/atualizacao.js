@@ -18,6 +18,33 @@ function lerLog() {
   try { return fs.readFileSync(path.join(DIR, "execucao.log"), "utf8").split("\n").slice(-200).join("\n"); } catch { return ""; }
 }
 
+// ACS em servidor separado: ele segue a versão do portal e manda o estado para cá (POST /internal/atualizacao/acs,
+// só dos IPs do WIFI_BACKUP_ALLOW). Guardado em data/atualizacao-acs.json, só com os campos esperados.
+const ACS_FILE = path.join(path.dirname(env.USERS_FILE), "atualizacao-acs.json");
+const txt = (s, n = 300) => (typeof s === "string" ? s.slice(0, n) : s == null ? null : String(s).slice(0, n));
+function receberAcs(b, ip) {
+  if (!b || typeof b !== "object") throw bad("corpo inválido");
+  const x = b.execucao && typeof b.execucao === "object" ? b.execucao : null;
+  const limpo = {
+    ip, recebidoEm: new Date().toISOString(),
+    instalada: txt(b.instalada, 40), anterior: txt(b.anterior, 40), seguirFalhou: txt(b.seguirFalhou, 40),
+    historico: (Array.isArray(b.historico) ? b.historico.slice(-10) : []).map((h) => ({
+      em: txt(h.em, 40), acao: txt(h.acao, 20), de: txt(h.de, 40), para: txt(h.para, 40), usuario: txt(h.usuario, 60), resultado: txt(h.resultado, 20), mensagem: txt(h.mensagem),
+    })),
+    execucao: x && {
+      estado: txt(x.estado, 20), acao: txt(x.acao, 20), versao: txt(x.versao, 40), de: txt(x.de, 40), usuario: txt(x.usuario, 60),
+      inicio: txt(x.inicio, 40), fim: txt(x.fim, 40), mensagem: txt(x.mensagem),
+      passos: (Array.isArray(x.passos) ? x.passos.slice(-40) : []).map((p) => ({ em: txt(p.em, 40), texto: txt(p.texto) })),
+    },
+  };
+  fs.writeFileSync(ACS_FILE + ".tmp", JSON.stringify(limpo), { mode: 0o640 });
+  fs.renameSync(ACS_FILE + ".tmp", ACS_FILE);
+  return { ok: true };
+}
+function estadoAcs() {
+  try { return JSON.parse(fs.readFileSync(ACS_FILE, "utf8")); } catch { return null; }
+}
+
 function podeAtualizar(usuario) {
   return env.ATUALIZAR_USUARIOS.includes(usuario);
 }
@@ -40,6 +67,7 @@ function estado(usuario) {
     log: x ? lerLog() : "",
     pedidoPendente: fs.existsSync(path.join(DIR, "pedidos", "pedido.json")),
     podeAtualizar: podeAtualizar(usuario),
+    acsSeparado: estadoAcs(),
   };
 }
 
@@ -71,4 +99,4 @@ function pedir(p, usuario) {
   return { ok: true, pedido };
 }
 
-module.exports = { estado, pedir, podeAtualizar };
+module.exports = { estado, pedir, podeAtualizar, receberAcs };

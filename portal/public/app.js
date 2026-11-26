@@ -1670,6 +1670,33 @@ async function pageAtualizacoes() {
     const rodando = !!(x && x.estado === "rodando") || r.pedidoPendente;
     const pode = r.podeAtualizar && r.instalado && !rodando;
     const disp = r.disponiveis || [];
+    // ACS em outro servidor: ele segue a versão do portal (confere a cada 2 min) e manda o estado para cá
+    const a = r.acsSeparado;
+    const ax = a && a.execucao;
+    const acsRodando = !!(ax && ax.estado === "rodando" && Date.now() - Date.parse(ax.inicio) < 30 * 60000);
+    let acsCard = "";
+    if (a) {
+      const sumido = Date.now() - Date.parse(a.recebidoEm) > 10 * 60000;
+      const atras = /^v\d/.test(r.versao) && a.instalada !== r.versao;
+      const badge = acsRodando ? `<span class="badge warn">atualizando…</span>`
+        : sumido ? `<span class="badge bad">sem contato há ${esc(timeAgo(a.recebidoEm).replace(/^há /, ""))}</span>`
+        : a.seguirFalhou && a.seguirFalhou === r.versao ? `<span class="badge bad">falhou ao instalar ${esc(a.seguirFalhou)}</span>`
+        : atras ? `<span class="badge warn">vai se atualizar para ${esc(r.versao)} em até 2 min</span>`
+        : `<span class="badge good">mesma versão do portal</span>`;
+      acsCard = `<div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h2>ACS (servidor ${esc(a.ip || "separado")})</h2>${badge}</div>
+        <p class="muted" style="margin:0 0 8px">versão instalada <b>${esc(a.instalada || "?")}</b> · último contato ${timeAgo(a.recebidoEm)}.
+          O ACS segue a versão deste portal: depois de atualizar aqui, ele instala a mesma versão sozinho (só avança; para voltar o ACS,
+          use <code>globaltech-atualizar voltar</code> no servidor dele).
+          ${a.seguirFalhou && a.seguirFalhou === r.versao && !acsRodando ? `<br><span style="color:var(--bad)">A instalação de ${esc(a.seguirFalhou)} no ACS falhou e não será repetida sozinha (o ACS continua em ${esc(a.instalada)}).
+            Veja os passos abaixo; para tentar de novo, no servidor do ACS: <code>globaltech-atualizar aplicar ${esc(a.seguirFalhou)}</code></span>` : ""}</p>
+        ${ax ? `<p class="muted" style="margin:0 0 6px">Última execução no ACS: ${esc(ax.acao === "voltar" ? "voltar para" : "atualizar para")} <b>${esc(ax.versao || "")}</b>
+          · <span class="badge ${(ATU_RESULT[ax.estado] || ["warn"])[0]}">${esc((ATU_RESULT[ax.estado] || [ax.estado])[1])}</span>
+          · ${timeAgo(ax.inicio)}${ax.mensagem ? ` · ${esc(ax.mensagem)}` : ""}</p>
+          <details${acsRodando || ax.estado === "erro" || ax.estado === "revertido" ? " open" : ""}><summary>Passos no ACS</summary>
+          <ol class="atu-passos">${(ax.passos || []).map((p) => `<li>${esc(p.texto)} <span class="muted">${esc(fmtDate(p.em))}</span></li>`).join("")}</ol></details>` : ""}
+      </div>`;
+    }
     view.innerHTML = `
       <div class="page-head"><h1>Atualizações</h1>
         <span class="muted">versão instalada <b>${esc(r.versao)}</b>${r.canal === "teste" ? ` · <span class="badge warn">servidor de teste</span>` : ""}</span>
@@ -1692,6 +1719,7 @@ async function pageAtualizacoes() {
         <ol class="atu-passos">${(x.passos || []).map((p) => `<li>${esc(p.texto)} <span class="muted">${esc(fmtDate(p.em))}</span></li>`).join("")}</ol>
         ${r.log ? `<details${x.estado === "erro" || x.estado === "revertido" ? " open" : ""}><summary>Registro completo</summary><pre class="atu-log">${esc(r.log)}</pre></details>` : ""}
       </div>` : ""}${r.pedidoPendente && !(x && x.estado === "rodando") ? `<div class="card" style="margin-bottom:16px"><span class="badge warn">pedido enviado, aguardando o atualizador…</span></div>` : ""}</div>
+      ${acsCard}
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><h2>Versões novas</h2></div>
         ${disp.length ? disp.map((d) => `<div class="atu-versao">
@@ -1716,7 +1744,7 @@ async function pageAtualizacoes() {
     if (bv) bv.addEventListener("click", () => pedir("/atualizacao/verificar", null, "Pedindo a consulta ao GitHub…"));
     view.querySelectorAll("[data-atu-aplicar]").forEach((b) => b.addEventListener("click", () => {
       const v = b.dataset.atuAplicar;
-      if (!confirm(`Atualizar o sistema para ${v}?\n\n• O servidor confere a versão nova antes de trocar.\n• O portal reinicia por ~1 segundo (ninguém é desconectado).\n• Se algo falhar, volta sozinho para ${r.versao}.`)) return;
+      if (!confirm(`Atualizar o sistema para ${v}?\n\n• O servidor confere a versão nova antes de trocar.\n• O portal reinicia por ~1 segundo (ninguém é desconectado).\n• Se algo falhar, volta sozinho para ${r.versao}.${a ? "\n• Depois, o ACS (outro servidor) instala a mesma versão sozinho em até 2 minutos." : ""}`)) return;
       pedir("/atualizacao/aplicar", { versao: v }, "Pedindo a atualização…");
     }));
     const bb = $("#atu-voltar");
@@ -1726,7 +1754,9 @@ async function pageAtualizacoes() {
     });
     // Durante a execução, acompanha ao vivo
     clearInterval(pageTimer);
-    pageTimer = setInterval(render, rodando ? 3000 : 60000);
+    // ACS atrás do portal: confere a cada 10 s até ele terminar
+    const acsAtras = a && /^v\d/.test(r.versao) && a.instalada !== r.versao && a.seguirFalhou !== r.versao;
+    pageTimer = setInterval(render, rodando || acsRodando ? 3000 : acsAtras ? 10000 : 60000);
   };
   await render();
 }

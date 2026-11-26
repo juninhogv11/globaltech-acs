@@ -1,0 +1,9 @@
+[Unit]
+Description=Globaltech ACS: confere a cada 2 min se o portal foi atualizado (só no ACS separado do portal)
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target

@@ -8,6 +8,8 @@
 //   estado.js fim <ok|erro|revertido> "<texto>" encerra a execução e grava no histórico
 //   estado.js disponiveis                       lê as tags (stdin, uma por linha) e grava as versões mais novas, com as notas
 //   estado.js compara <a> <b>                   imprime -1, 0 ou 1
+//   estado.js versao-portal <url>               versão em que o portal está (GET /api/saude); vazio se não responder
+//   estado.js relatar <url>                     manda o estado deste ACS para o portal (POST /internal/atualizacao/acs)
 // Variáveis: VAR (pasta de estado), REPO (URL do GitHub), CANAL (versoes | teste)
 const fs = require("fs");
 const path = require("path");
@@ -119,8 +121,30 @@ function logar(texto) {
     gravar(EST, e);
   } else if (cmd === "compara") {
     console.log(compara(a, b));
+  } else if (cmd === "versao-portal") {
+    // Versão em que o portal (outro servidor) está: GET <url>/api/saude
+    try {
+      const r = await fetch(a.replace(/\/+$/, "") + "/api/saude", { signal: AbortSignal.timeout(10000) });
+      const j = r.ok ? await r.json() : {};
+      if (VERSAO_RE.test(String(j.versao || ""))) console.log(j.versao);
+    } catch {}
+  } else if (cmd === "relatar") {
+    // ACS em servidor separado: manda o estado para o portal mostrar na página Atualizações
+    const e = ler(EST, {}), x = ler(EXE, null);
+    const corpo = {
+      instalada: e.instalada || "dev", anterior: e.anterior || null, seguirFalhou: e.seguirFalhou || null,
+      historico: (e.historico || []).slice(-10),
+      execucao: x && { estado: x.estado, acao: x.acao, versao: x.versao, de: x.de, usuario: x.usuario, inicio: x.inicio, fim: x.fim || null,
+        mensagem: x.mensagem || "", passos: (x.passos || []).slice(-40) },
+    };
+    try {
+      const r = await fetch(a.replace(/\/+$/, "") + "/internal/atualizacao/acs", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) console.error(`portal respondeu ${r.status} ao relatar (o IP deste servidor está no WIFI_BACKUP_ALLOW do portal?)`);
+    } catch (err) { console.error(`não consegui relatar ao portal: ${err.message}`); }
   } else {
-    console.error("uso: estado.js get|set|inicio|passo|fim|disponiveis|erro-verificacao|compara");
+    console.error("uso: estado.js get|set|inicio|passo|fim|disponiveis|erro-verificacao|compara|versao-portal|relatar");
     process.exit(2);
   }
 })().catch((e) => { console.error(e.message); process.exit(1); });

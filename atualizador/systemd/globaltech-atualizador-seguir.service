@@ -1,0 +1,11 @@
+[Unit]
+Description=Globaltech ACS: ACS em servidor separado segue a versão do portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/globaltech-atualizador/atualizador.sh seguir
+TimeoutStartSec=1800
+# 75 = outra execução do atualizador em andamento (tenta de novo no próximo ciclo)
+SuccessExitStatus=75

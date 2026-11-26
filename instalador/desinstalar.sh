@@ -93,7 +93,7 @@ fi
 etapa "Parando e removendo os serviços"
 UNIDADES="genieacs-cwmp genieacs-nbi genieacs-fs genieacs-ui globaltech-portal genieacs-backup-api genieacs-firewall
 genieacs-backup.timer genieacs-restart-semanal.timer genieacs-limpeza-offline.timer
-globaltech-atualizador.path globaltech-atualizador-verificar.timer"
+globaltech-atualizador.path globaltech-atualizador-verificar.timer globaltech-atualizador-seguir.timer"
 for u in $UNIDADES; do systemctl disable --now "$u" >/dev/null 2>&1 && echo "parado: $u"; done
 rm -f /etc/systemd/system/genieacs-*.service /etc/systemd/system/genieacs-*.timer /etc/systemd/system/globaltech-portal.service /etc/systemd/system/globaltech-atualizador*
 rm -rf /opt/globaltech-atualizador /var/lib/globaltech-atualizador /etc/globaltech-acs /usr/local/sbin/globaltech-atualizar

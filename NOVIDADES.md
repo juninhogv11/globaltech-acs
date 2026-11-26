@@ -4,6 +4,15 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-5 — ACS em servidor separado atualiza junto com o portal
+
+- Quando o ACS fica em outro servidor, ele agora segue a versão do portal: depois de atualizar pelo botão do portal, o ACS
+  instala a mesma versão sozinho em até 2 minutos, com as mesmas conferências e volta automática. O andamento aparece na
+  página Atualizações, no cartão "ACS".
+- **Atenção:** no servidor do ACS separado, esta versão precisa ser instalada uma vez pela linha de comando (como root):
+  `globaltech-atualizar aplicar v2026.11.25-5`. Daí em diante ele acompanha o portal sozinho. O IP do ACS precisa estar no
+  `WIFI_BACKUP_ALLOW` do `.env` do portal (já está, se a restauração do Wi-Fi funciona).
+
 ## v2026.11.25-4 — ONU V-SOL V2802DAC
 
 - **V-SOL V2802DAC:** sinal óptico (RX e TX) correto na página do aparelho. Esse modelo informa o sinal já em dBm; antes o

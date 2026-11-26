@@ -557,6 +557,13 @@ const server = http.createServer(async (req, res) => {
       return res.json(backup.portalBundle());
     }
 
+    // ACS em servidor separado manda o estado da atualização dele (só o IP do ACS, sem login)
+    if (pathname === "/internal/atualizacao/acs") {
+      const ip = String(req.ip || "").replace(/^::ffff:/, "");
+      if (req.method !== "POST" || !WIFI_BACKUP_ALLOW.includes(ip)) return res.status(403).json({ error: "Proibido" });
+      return res.json(atualizacao.receberAcs(await readJson(req, 64 * 1024), ip));
+    }
+
     if (!pathname.startsWith("/api/")) {
       if (req.method !== "GET" && req.method !== "HEAD") return res.status(405).end();
       if (pathname === "/vendor/chart.umd.js") return sendFile(res, CHART_JS, 86400);

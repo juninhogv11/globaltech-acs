@@ -36,8 +36,15 @@ Ele detecta o que há no servidor (portal em `/opt/globaltech-portal`, ACS em `/
 `/etc/globaltech-acs/atualizador.conf` e copia o `acs.env` para `/etc/globaltech-acs/acs.env`.
 Instalações novas (`instalador/instalar.sh`) já fazem isso sozinhas.
 
-**Portal e ACS em servidores separados:** instale o atualizador nos dois. O botão do portal atualiza o servidor do portal;
-no servidor do ACS rode `globaltech-atualizar aplicar <versao>` (mesma versão).
+**Portal e ACS em servidores separados:** instale o atualizador nos dois. O botão do portal atualiza o servidor do portal e
+**o ACS segue sozinho**: a cada 2 min (`globaltech-atualizador-seguir.timer`, ligado só quando `ACS=1` e `PORTAL=0`) ele lê a
+versão do portal em `<portal>/api/saude` e, se for mais nova que a dele, instala a mesma versão (com as mesmas conferências e
+volta automática). O andamento aparece na página Atualizações do portal (cartão "ACS").
+- Endereço do portal: `PORTAL_URL=` no `atualizador.conf`; vazio = `WIFI_PORTAL_URL` do `/opt/genieacs/sgp.env`.
+- O portal só aceita o relatório dos IPs do `WIFI_BACKUP_ALLOW` do `.env` dele (o mesmo da cópia do Wi-Fi).
+- Só avança: se o portal voltar de versão, o ACS fica onde está (`globaltech-atualizar voltar` no ACS, se precisar).
+- Se a instalação no ACS falhar, ele não tenta a mesma versão de novo sozinho (`seguirFalhou` no `estado.json`);
+  para repetir: `globaltech-atualizar aplicar <versao>` no ACS.
 
 ## Linha de comando (root)
 
@@ -60,3 +67,4 @@ cat /var/lib/globaltech-atualizador/execucao.log
 | `/var/lib/globaltech-atualizador/` | `estado.json`, `execucao.json/.log` (o portal lê), `pedidos/`, `anterior/` (cópias) |
 | `globaltech-atualizador.path/.service` | executa o pedido do portal |
 | `globaltech-atualizador-verificar.timer` | consulta diária (06:00 + até 1 h) |
+| `globaltech-atualizador-seguir.timer` | só no ACS separado: segue a versão do portal (a cada 2 min) |

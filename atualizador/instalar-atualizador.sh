@@ -27,7 +27,18 @@ ln -sf "$BASE/atualizador.sh" /usr/local/sbin/globaltech-atualizar
 for u in "$SRC"/atualizador/systemd/*; do trocar "$u" "/etc/systemd/system/$(basename "$u")" 644; done
 systemctl daemon-reload
 
+# ACS em servidor separado do portal: segue a versão do portal (timer a cada 2 min). Liga também nas atualizações.
+ligar_seguir() {
+  if [ "${ACS:-0}" = 1 ] && [ "${PORTAL:-0}" = 0 ]; then
+    systemctl enable --now globaltech-atualizador-seguir.timer >/dev/null 2>&1 && echo "ACS separado: segue a versão do portal (a cada 2 min)."
+  else
+    systemctl disable --now globaltech-atualizador-seguir.timer >/dev/null 2>&1 || true
+  fi
+}
+
 if [ "${1:-}" = "--so-arquivos" ]; then
+  # shellcheck disable=SC1090
+  [ -f "$CONF" ] && { . "$CONF"; ligar_seguir; }
   echo "Arquivos do atualizador atualizados."
   exit 0
 fi
@@ -50,6 +61,8 @@ PORTAL_APP=$PORTAL_APP
 ACS=$ACS
 ACS_ENV=$ETC/acs.env
 EXT_DIR=$EXT_DIR
+# ACS separado do portal: endereço do portal que ele segue (vazio = WIFI_PORTAL_URL do /opt/genieacs/sgp.env)
+PORTAL_URL=
 EOF
   chmod 600 "$CONF"
   echo "Criado $CONF (portal=$PORTAL, ACS=$ACS, canal=${CANAL:-versoes})."
@@ -88,6 +101,7 @@ chgrp "$GRUPO" "$VAR"/*.json 2>/dev/null || true
 
 systemctl enable --now globaltech-atualizador-verificar.timer >/dev/null
 [ "${PORTAL:-0}" = 1 ] && systemctl enable --now globaltech-atualizador.path >/dev/null
+ligar_seguir
 echo "Consultando versões no GitHub…"
 "$BASE/atualizador.sh" verificar || echo "AVISO: não consegui consultar o GitHub agora (tenta de novo todo dia)."
 echo
