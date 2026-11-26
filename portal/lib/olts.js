@@ -152,7 +152,7 @@ async function testar(id) {
 }
 
 // Comandos SOMENTE de leitura (para levantar o formato das saídas de cada fabricante)
-const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+|scroll( \d+)?)$/i; // "cd": CLI FiberHome AN5516; "scroll": paginação Huawei
+const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|config|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+|scroll( \d+)?)$/i; // "cd": CLI FiberHome AN5516; "scroll": paginação Huawei
 async function lerComandos(id, comandos) {
   const o = buscar(id);
   const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 40);

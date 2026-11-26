@@ -4,6 +4,14 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.25-7 — OLTs Huawei conferidas
+
+- OLTs Huawei conferidas em equipamentos reais (MA5608T, MA5800-X2, X15 e X17): ONUs, motivo da queda, sinal e temperatura
+  batem com a tela da OLT.
+- Temperatura da Huawei mostra o nome de cada placa e usa limites próprios (aviso a partir de 75 °C, alarme a 85 °C): a placa
+  controladora trabalha normalmente perto de 70 °C e antes aparecia como alarme.
+- Telnet da Huawei: corrigido o "tempo esgotado" em comandos que pedem confirmação (`{ <cr>||<K> }:`).
+
 ## v2026.11.25-6 — OLTs Huawei
 
 - **OLTs novas:** Huawei MA5608T, MA5800-X2, MA5800-X15 e MA5800-X17 (ONUs online, sem energia, sem fibra com o motivo da

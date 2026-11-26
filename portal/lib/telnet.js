@@ -43,6 +43,8 @@ class Sessao {
     }
     this.buf += Buffer.from(out).toString("latin1").replace(/\r/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
     if (MORE_RE.test(this.buf.slice(-120))) { this.buf = this.buf.replace(MORE_RE, ""); this.sock.write(" "); }
+    // Huawei: comando com parâmetros opcionais pergunta "{ <cr>|ontid<U><0,255> }:" -> Enter aceita como está
+    else if (/\{ ?<cr>[^{}\n]*\}:\s*$/.test(this.buf.slice(-200))) { this.buf = this.buf.replace(/[^\n]*\{ ?<cr>[^{}\n]*\}:\s*$/, ""); this.sock.write("\r\n"); }
     this._acordar();
   }
   _acordar(err) {

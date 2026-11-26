@@ -5,7 +5,7 @@
 //   Nokia ISAM: show equipment ont status pon + operational-data (down-reason)
 //   ZTE C220:   SNMP (árvore antiga 3902.1012) com Telnet de reserva (show gpon onu state, nomes "gpon-onu_1/2/1:1")
 //   FiberHome AN5516/AN6000: só SNMP (5875.800.3.10.1.1, tabela de ONUs autorizadas)
-//   Huawei MA5608T / MA5800-X2/X15/X17: só SNMP (HUAWEI-XPON-MIB 2011.6.128.1.1.2), feito SEM OLT real
+//   Huawei MA5608T / MA5800-X2/X15/X17: só SNMP (HUAWEI-XPON-MIB 2011.6.128.1.1.2), conferido em OLTs reais
 //   Os 3 últimos foram feitos SEM OLT real (25/11/2026): ver HISTORICO.md o que falta conferir.
 // Guarda em data/olt-onus.json: estado atual de cada ONU e histórico de quedas (45 dias).
 const fs = require("fs");
@@ -328,11 +328,12 @@ async function coletarFhSnmp(o) {
 }
 
 // ---------- Huawei MA5608T / MA5800-X2/X15/X17 (HUAWEI-XPON-MIB, enterprise 2011) ----------
-// Conferido na MIB (mibs.observium.org, 25/11/2026), SEM OLT real. Tabelas indexadas por .<ifIndex da PON>.<id da ONT>:
+// Conferido na MIB (mibs.observium.org) e em OLTs reais em 25/11/2026 (MA5608T V800R015, MA5800-X2 V100R019, X15 V100R020,
+// X17): serial, estado, causa, RX na ONT e na OLT batem com "display ont info" / "display ont optical-info". Tabelas indexadas por .<ifIndex da PON>.<id da ONT>:
 //   serial 2011.6.128.1.1.2.43.1.3 (8 bytes "HWTC"+4 bytes), estado 46.1.15 (1 up, 2 down, -1 sem leitura),
 //   última causa de queda 46.1.24 (1 LOS, 2 LOSi/LOBi, 3 LOFi, 4 SFi, 5 LOAi, 6 LOAMi, 9 reset, 13 dying-gasp ...),
 //   RX na ONT 51.1.4 (centésimos de dBm); RX da ONT na OLT 51.1.6 (dBm = (valor - 10000) / 100).
-//   Porta PON: nome pelo ifDescr ("GPON 0/1/0"); reserva: ifIndex = 0xFA000000 + quadro·2^18 + slot·2^13 + porta·2^8.
+//   Porta PON: nome pelo ifDescr ("...GPON_UNI 0/1/0"; a MA5608T não traz o número -> fórmula, conferida); reserva: ifIndex = 0xFA000000 + quadro·2^18 + slot·2^13 + porta·2^8.
 //   Temperatura das placas: 2011.2.6.7.1.1.2.1.10 (°C).
 const HW_OID = {
   sn: "1.3.6.1.4.1.2011.6.128.1.1.2.43.1.3",
@@ -611,12 +612,24 @@ async function statusFh(o) {
   if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
   return out;
 }
-// Huawei: temperatura de cada placa (SNMP 2011.2.6.7.1.1.2.1.10, °C; placa vazia volta 0 ou 2147483647)
+// Huawei: temperatura de cada placa (SNMP 2011.2.6.7.1.1.2.1.10, °C; placa vazia volta 2147483647) e o nome dela (.7).
+// Conferido em 25/11/2026 com "display temperature 0/3" (MA5608T: controladora H801MCUD1 a 72 °C trabalhando normal).
+// A controladora da Huawei trabalha quente e a OLT não informa o limite por SNMP: aviso a partir de 75 °C, alarme a 85 °C.
+const HW_NOME_PLACA = "1.3.6.1.4.1.2011.2.6.7.1.1.2.1.7";
+const HW_TEMP_LIM = { warn: 75, bad: 85 };
 async function statusHuawei(o) {
-  const t = await olts.snmpColunas(o.id, [HW_TEMP], 100);
+  const t = await olts.snmpColunas(o.id, [HW_TEMP, HW_NOME_PLACA], 100);
+  const nomes = {}; for (const vb of t[HW_NOME_PLACA]) nomes[vb.oid.slice(HW_NOME_PLACA.length + 1)] = String(vb.value || "").trim();
   const out = { nivel: "ok", pontos: [] };
-  for (const vb of t[HW_TEMP]) if (typeof vb.value === "number" && vb.value > 0 && vb.value < 120) out.pontos.push({ nome: `placa ${vb.oid.slice(HW_TEMP.length + 1).replace(/^0\./, "")}`, temp: vb.value });
-  if (out.pontos.length) { out.temp = Math.max(...out.pontos.map((p) => p.temp)); out.nivel = nivelTemp(out.temp); }
+  for (const vb of t[HW_TEMP]) {
+    if (typeof vb.value !== "number" || vb.value <= 0 || vb.value >= 120) continue;
+    const k = vb.oid.slice(HW_TEMP.length + 1);
+    out.pontos.push({ nome: `placa ${k.replace(/^0\./, "")}${nomes[k] ? " " + nomes[k] : ""}`, temp: vb.value });
+  }
+  if (out.pontos.length) {
+    out.temp = Math.max(...out.pontos.map((p) => p.temp));
+    out.nivel = out.temp >= HW_TEMP_LIM.bad ? "bad" : out.temp >= HW_TEMP_LIM.warn ? "warn" : "ok";
+  }
   return out;
 }
 async function lerStatus(o, c) {
