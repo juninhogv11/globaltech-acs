@@ -124,8 +124,16 @@ const ICONS = {
 async function pageDashboard() {
   const s = await api("/summary");
   $("#updated").textContent = "Atualizado " + new Date(s.updatedAt).toLocaleTimeString("pt-BR");
+  // Versão nova publicada: faixa no topo (preenchida quando a consulta voltar)
+  versaoNova().then((v) => {
+    const el = $("#aviso-versao");
+    if (el && v) el.innerHTML = `<div class="aviso-versao"><span class="nav-novo" style="margin:0"></span>
+      <span>Versão nova disponível: <b>${esc(v.versao)}</b>${v.titulo ? ` — ${esc(v.titulo)}` : ""}${v.auto && v.auto.ativo ? ` <span class="muted">(instala sozinha às ${String(v.auto.hora).padStart(2, "0")}h)</span>` : ""}</span>
+      <a class="btn sm" href="#/atualizacoes">Ver novidades</a></div>`;
+  });
   view.innerHTML = `
     <div class="page-head"><h1>Monitoramento da rede</h1></div>
+    <div id="aviso-versao"></div>
     <div class="stats">
       <a class="stat blue" href="#/devices"><div><small>Total de dispositivos</small><b>${s.total}</b></div>${ICONS.devices}</a>
       <a class="stat green" href="#/devices?f=online"><div><small>Online</small><b>${s.online}</b></div>${ICONS.online}</a>
@@ -1731,6 +1739,17 @@ async function pageAtualizacoes() {
         ${r.log ? `<details${x.estado === "erro" || x.estado === "revertido" ? " open" : ""}><summary>Registro completo</summary><pre class="atu-log">${esc(r.log)}</pre></details>` : ""}
       </div>` : ""}${r.pedidoPendente && !(x && x.estado === "rodando") ? `<div class="card" style="margin-bottom:16px"><span class="badge warn">pedido enviado, aguardando o atualizador…</span></div>` : ""}</div>
       ${acsCard}
+      ${r.partes.portal ? `<div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h2>Atualização automática</h2>
+          <span class="badge ${r.automatico && r.automatico.ativo ? "good" : ""}">${r.automatico && r.automatico.ativo ? `ligada · ${String(r.automatico.hora).padStart(2, "0")}h` : "desligada"}</span></div>
+        <p class="muted" style="margin:0 0 10px">Ligada, o servidor procura uma versão nova todo dia no horário escolhido (horário de Brasília) e instala sozinho,
+          com as mesmas conferências e a volta automática se algo falhar. Uma versão que falhar não é tentada de novo sozinha.
+          ${r.autoFalhou ? `<br><span style="color:var(--bad)">A instalação automática de ${esc(r.autoFalhou)} falhou; atualize pelo botão depois de ver o registro.</span>` : ""}</p>
+        ${r.podeAtualizar ? `<div class="atu-auto">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="auto-ativo" ${r.automatico && r.automatico.ativo ? "checked" : ""}> Atualizar sozinho</label>
+          <label style="display:flex;align-items:center;gap:6px">às <select id="auto-hora">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${(r.automatico ? r.automatico.hora : 3) === h ? "selected" : ""}>${String(h).padStart(2, "0")}:05</option>`).join("")}</select></label>
+          <button class="btn sm" id="auto-salvar" ${rodando ? "disabled" : ""}>Salvar</button></div>` : ""}
+      </div>` : ""}
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><h2>Versões novas</h2></div>
         ${disp.length ? disp.map((d) => `<div class="atu-versao">
@@ -1753,6 +1772,13 @@ async function pageAtualizacoes() {
     };
     const bv = $("#atu-verificar");
     if (bv) bv.addEventListener("click", () => pedir("/atualizacao/verificar", null, "Pedindo a consulta ao GitHub…"));
+    const bs = $("#auto-salvar");
+    if (bs) bs.addEventListener("click", () => {
+      const ativo = $("#auto-ativo").checked, hora = Number($("#auto-hora").value);
+      if (ativo && !confirm(`Ligar a atualização automática às ${String(hora).padStart(2, "0")}:05?\n\nToda versão nova publicada será instalada sozinha nesse horário (com conferência e volta automática se falhar).`)) return;
+      avisoVersao.em = 0;
+      pedir("/atualizacao/automatico", { ativo, hora }, "Salvando…");
+    });
     view.querySelectorAll("[data-atu-aplicar]").forEach((b) => b.addEventListener("click", () => {
       const v = b.dataset.atuAplicar;
       if (!confirm(`Atualizar o sistema para ${v}?\n\n• O servidor confere a versão nova antes de trocar.\n• O portal reinicia por ~1 segundo (ninguém é desconectado).\n• Se algo falhar, volta sozinho para ${r.versao}.${a ? "\n• Depois, o ACS (outro servidor) instala a mesma versão sozinho em até 2 minutos." : ""}`)) return;
@@ -1772,8 +1798,43 @@ async function pageAtualizacoes() {
   await render();
 }
 
+// ---------- Conferir instalação (como o "validate" do LibreNMS; só leitura) ----------
+const CONF_IC = { ok: "✓", warn: "!", bad: "✕", info: "i" };
+async function pageConferir() {
+  const render = async () => {
+    view.innerHTML = `<div class="page-head"><h1>Conferir instalação</h1></div><div class="card"><div class="empty">Conferindo…</div></div>`;
+    const r = await api("/conferir");
+    const grupos = [...new Set(r.itens.map((i) => i.grupo))];
+    view.innerHTML = `
+      <div class="page-head"><h1>Conferir instalação</h1>
+        <span class="muted">${r.conta.bad ? `<span class="badge bad">${r.conta.bad} problema(s)</span> ` : ""}${r.conta.warn ? `<span class="badge warn">${r.conta.warn} ponto(s) de atenção</span> ` : ""}${!r.conta.bad && !r.conta.warn ? `<span class="badge good">tudo certo</span> ` : ""}· conferido ${timeAgo(r.em)}</span>
+        <button class="btn" id="conf-de-novo" style="margin-left:auto">Conferir de novo</button></div>
+      <p class="muted" style="margin:-6px 0 14px">Só lê o estado do servidor; não muda nada. Confira depois de instalar, de atualizar ou quando algo parecer estranho.</p>
+      ${grupos.map((g) => `<div class="card conf-grupo"><div class="card-head"><h2>${esc(g)}</h2></div>
+        ${r.itens.filter((i) => i.grupo === g).map((i) => `<div class="conf-item">
+          <span class="conf-ic ${i.nivel}">${CONF_IC[i.nivel] || "?"}</span><b>${esc(i.nome)}</b><span>${esc(i.detalhe || "")}</span>
+          ${i.dica ? `<span class="dica">${esc(i.dica)}</span>` : ""}</div>`).join("")}</div>`).join("")}`;
+    $("#conf-de-novo").addEventListener("click", render);
+  };
+  await render();
+}
+
+// Aviso de versão nova (bolinha no menu e faixa no Dashboard); consulta leve, no máximo a cada 10 min
+let avisoVersao = { em: 0, r: null };
+async function versaoNova() {
+  if (Date.now() - avisoVersao.em > 600000) {
+    try { avisoVersao = { em: Date.now(), r: await api("/atualizacao") }; } catch { return null; }
+  }
+  const r = avisoVersao.r;
+  const v = r && r.instalado && (r.disponiveis || []).find((d) => d.versao !== "main");
+  const nav = $("#nav-novo");
+  if (nav) nav.hidden = !v;
+  return v ? { versao: v.versao, titulo: v.notas && v.notas.titulo, auto: r.automatico } : null;
+}
+
 // ---------- Roteamento ----------
 const ROUTES = {
+  conferir: ["conferir", "Conferir instalação", pageConferir],
   atualizacoes: ["atualizacoes", "Atualizações", pageAtualizacoes],
   olts: ["olts", "OLTs", pageOlts],
   backups: ["backups", "Backups", pageBackups],
@@ -1843,4 +1904,5 @@ function sgpClienteLink(id) {
   $("#avatar").textContent = (me.name || "?")[0].toUpperCase();
   window.addEventListener("hashchange", () => route());
   route();
+  versaoNova(); // bolinha no menu Atualizações
 })();

@@ -1,0 +1,11 @@
+[Unit]
+Description=Globaltech ACS: atualização automática (se ligada na página Atualizações)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/globaltech-atualizador/atualizador.sh auto
+TimeoutStartSec=1800
+# 75 = outra execução do atualizador em andamento
+SuccessExitStatus=75

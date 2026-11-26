@@ -18,6 +18,7 @@ const oltcoleta = require("./lib/oltcoleta");
 if (!env.VERIFICAR) oltcoleta.iniciar(() => devices.all());
 const assistente = require("./lib/assistente");
 const atualizacao = require("./lib/atualizacao");
+const conferir = require("./lib/conferir");
 
 // IPs que podem ler a cópia do Wi-Fi (o servidor GenieACS, na restauração após reset)
 const WIFI_BACKUP_ALLOW = (process.env.WIFI_BACKUP_ALLOW || "192.168.10.2").split(",").map((s) => s.trim());
@@ -290,6 +291,14 @@ api.post("/api/atualizacao/aplicar", async (req, res) => {
   console.log(new Date().toISOString(), `atualização para ${req.body.versao} pedida por ${req.user.user}`);
   res.json(r);
 });
+api.post("/api/atualizacao/automatico", async (req, res) => {
+  const b = req.body || {};
+  const r = atualizacao.pedir({ acao: "auto", ativo: !!b.ativo, hora: b.hora }, req.user.user);
+  console.log(new Date().toISOString(), `atualização automática ${b.ativo ? "ligada às " + b.hora + "h" : "desligada"} por ${req.user.user}`);
+  res.json(r);
+});
+// Conferir instalação (só leitura): o que está certo e o que precisa de atenção neste servidor
+api.get("/api/conferir", async (req, res) => res.json(await conferir.conferir()));
 api.post("/api/atualizacao/voltar", async (req, res) => {
   const r = atualizacao.pedir({ acao: "voltar" }, req.user.user);
   console.log(new Date().toISOString(), `volta para a versão anterior pedida por ${req.user.user}`);

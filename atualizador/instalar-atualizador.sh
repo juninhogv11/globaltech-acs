@@ -34,6 +34,12 @@ ligar_seguir() {
   else
     systemctl disable --now globaltech-atualizador-seguir.timer >/dev/null 2>&1 || true
   fi
+  # Servidor com portal: timer da atualização automática (só instala se ligada na página Atualizações)
+  if [ "${PORTAL:-0}" = 1 ]; then
+    systemctl enable --now globaltech-atualizador-auto.timer >/dev/null 2>&1 || true
+  else
+    systemctl disable --now globaltech-atualizador-auto.timer >/dev/null 2>&1 || true
+  fi
 }
 
 if [ "${1:-}" = "--so-arquivos" ]; then

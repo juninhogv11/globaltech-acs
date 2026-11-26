@@ -6,6 +6,7 @@
 #   globaltech-atualizar estado             mostra o estado
 #   globaltech-atualizar pedido             executa o pedido deixado pelo portal (chamado pelo systemd)
 #   globaltech-atualizar seguir             ACS separado: instala a versão em que o portal está (timer a cada 2 min)
+#   globaltech-atualizar auto               atualização automática, se ligada no portal (timer a cada hora)
 # A instalação em si fica em atualizador/aplicar.sh DA VERSÃO NOVA: correções no processo valem já na atualização seguinte.
 set -euo pipefail
 
@@ -100,9 +101,29 @@ seguir() {
   EST relatar "$url"
 }
 
+# Atualização automática (ligada na página Atualizações): o timer roda a cada hora; na hora escolhida, consulta o GitHub
+# e instala a versão marcada mais nova (nunca o "main"). Uma versão que falhou não é tentada de novo sozinha.
+auto() {
+  [ "$PORTAL" = 1 ] || return 0
+  local cfg ativo hora
+  cfg=$(EST get automatico)
+  [ -n "$cfg" ] || return 0
+  read -r ativo hora < <(node -e 'const c=JSON.parse(process.argv[1]);console.log(c.ativo===true?"sim":"nao",Number.isInteger(c.hora)?c.hora:-1)' "$cfg" 2>/dev/null || echo "nao -1")
+  # Hora no horário de Brasília (servidores podem estar em UTC); outro fuso: FUSO= no atualizador.conf
+  [ "$ativo" = sim ] && [ "$((10#$(TZ="${FUSO:-America/Sao_Paulo}" date +%H)))" = "$hora" ] || return 0
+  verificar >/dev/null 2>&1 || return 0
+  local alvo inst
+  alvo=$(node -e 'const e=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const v=(e.disponiveis||[]).map(d=>d.versao).filter(x=>/^v\d{4}\.\d{2}\.\d{2}(-\d{1,3})?$/.test(x));console.log(v[0]||"")' "$VAR/estado.json")
+  inst=$(EST get instalada); inst=${inst:-dev}
+  [ -n "$alvo" ] && [ "$(EST compara "$alvo" "$inst")" = 1 ] || return 0
+  [ "$(EST get autoFalhou)" = "$alvo" ] && { echo "$alvo já falhou antes: não tento de novo sozinho."; return 0; }
+  if aplicar "$alvo" "automático"; then EST set autoFalhou null; else EST set autoFalhou "\"$alvo\""; fi
+}
+
 case "${1:-}" in
   verificar) verificar ;;
   seguir) seguir ;;
+  auto) auto ;;
   aplicar) aplicar "${2:?informe a versão, ex.: v2026.11.25}" "linha de comando" ;;
   voltar)
     ant=$(EST get anterior)
@@ -113,14 +134,19 @@ case "${1:-}" in
     P="$VAR/pedidos/pedido.json"
     [ -f "$P" ] || exit 0
     # Lê e apaga o pedido antes de executar (um pedido = uma execução). Só aceita os campos esperados.
-    read -r acao versao usuario < <(node -e '
+    read -r acao versao usuario ativo hora < <(node -e '
       const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
       const ok = (s, re) => (typeof s === "string" && re.test(s) ? s : "-");
-      console.log(ok(p.acao, /^(verificar|aplicar|voltar)$/), ok(p.versao, /^(v\d{4}\.\d{2}\.\d{2}(-\d{1,3})?|main)$/), ok(p.usuario, /^[A-Za-z0-9_.-]{1,32}$/));
-    ' "$P" 2>/dev/null || echo "- - -")
+      const h = Number.isInteger(p.hora) && p.hora >= 0 && p.hora <= 23 ? p.hora : "-";
+      console.log(ok(p.acao, /^(verificar|aplicar|voltar|auto)$/), ok(p.versao, /^(v\d{4}\.\d{2}\.\d{2}(-\d{1,3})?|main)$/), ok(p.usuario, /^[A-Za-z0-9_.-]{1,32}$/), p.ativo === true ? "sim" : "nao", h);
+    ' "$P" 2>/dev/null || echo "- - - nao -")
     rm -f "$P"
     case "$acao" in
       verificar) verificar ;;
+      auto)
+        [ "$hora" != "-" ] || { echo "Pedido inválido ignorado."; exit 0; }
+        EST set automatico "{\"ativo\":$([ "$ativo" = sim ] && echo true || echo false),\"hora\":$hora,\"por\":\"$usuario\",\"em\":\"$(date -u +%FT%TZ)\"}"
+        echo "Atualização automática: $ativo às ${hora}h (por $usuario)" ;;
       aplicar) aplicar "$versao" "$usuario (portal)" ;;
       voltar)
         ant=$(EST get anterior)

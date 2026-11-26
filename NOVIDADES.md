@@ -4,6 +4,16 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.26 — Conferir instalação e atualização automática
+
+- **Nova página Configuração → Conferir instalação** (como o "validate" do LibreNMS): mostra o que está certo e o que precisa
+  de atenção no servidor — Node e sistema, disco, memória, relógio (NTP), GenieACS (API e serviços), atualizador, ACS
+  separado, backup e coleta das OLTs —, cada item com a dica de como resolver. Só lê; não muda nada.
+- **Atualização automática (opcional):** na página Atualizações, ligue "Atualizar sozinho" e escolha o horário (horário de
+  Brasília). Todo dia, nesse horário, o servidor instala a versão nova se houver, com as mesmas conferências e volta
+  automática. Vem **desligada**; uma versão que falhar não é tentada de novo sozinha.
+- **Aviso de versão nova:** bolinha no menu Atualizações e faixa no Dashboard quando houver versão publicada.
+
 ## v2026.11.25-8 — Sinal na OLT e distância na página do aparelho
 
 - O quadro de sinal da página do aparelho mostra agora **ONU Rx** (sinal que chega na ONU) e **OLT Rx** (sinal da ONU que

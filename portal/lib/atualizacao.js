@@ -68,6 +68,9 @@ function estado(usuario) {
     pedidoPendente: fs.existsSync(path.join(DIR, "pedidos", "pedido.json")),
     podeAtualizar: podeAtualizar(usuario),
     acsSeparado: estadoAcs(),
+    // Atualização automática: { ativo, hora } (gravada pelo atualizador a partir do pedido "auto"); autoFalhou = versão que falhou
+    automatico: (e && e.automatico) || null,
+    autoFalhou: (e && e.autoFalhou) || null,
   };
 }
 
@@ -86,6 +89,12 @@ function pedir(p, usuario) {
     pedido.versao = v;
   } else if (p.acao === "voltar") {
     if (!e.anterior) throw bad("Não há versão anterior registrada para voltar.");
+  } else if (p.acao === "auto") {
+    const hora = Number(p.hora);
+    if (!Number.isInteger(hora) || hora < 0 || hora > 23) throw bad("Escolha a hora (0 a 23).");
+    if (e.partes && !e.partes.portal) throw bad("Este servidor segue o portal; a atualização automática fica no portal.");
+    pedido.ativo = !!p.ativo;
+    pedido.hora = hora;
   } else if (p.acao !== "verificar") {
     throw bad("Ação inválida.");
   }

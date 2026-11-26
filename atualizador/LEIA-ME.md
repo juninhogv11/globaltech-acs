@@ -68,3 +68,4 @@ cat /var/lib/globaltech-atualizador/execucao.log
 | `globaltech-atualizador.path/.service` | executa o pedido do portal |
 | `globaltech-atualizador-verificar.timer` | consulta diária (06:00 + até 1 h) |
 | `globaltech-atualizador-seguir.timer` | só no ACS separado: segue a versão do portal (a cada 2 min) |
+| `globaltech-atualizador-auto.timer` | servidor com portal: a cada hora (:05) roda `atualizador.sh auto`, que só instala se a atualização automática estiver ligada na página Atualizações e for a hora escolhida (horário de Brasília; outro fuso: `FUSO=` no atualizador.conf). Configuração em `estado.json` → `automatico`; versão que falhou fica em `autoFalhou` e não é repetida. |
