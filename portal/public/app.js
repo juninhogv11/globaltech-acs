@@ -237,13 +237,16 @@ async function loadOltsPainel() {
   let r;
   try { r = await api("/olts"); } catch { return; }
   const box = $("#olts-painel");
+  // OLTs com a consulta desligada ficam fora do painel (só contam no título)
+  const desligadas = r.olts.filter((o) => o.ativo === false).length;
+  r.olts = r.olts.filter((o) => o.ativo !== false);
   if (!box || !r.olts.length) return;
   const coleta = r.coleta || {};
   const agora = Date.now();
   const linhas = r.olts.map((o) => {
     const c = (coleta.coletas || {})[o.id];
-    // Sem resposta: última coleta com erro ou parada há mais de 3 intervalos
-    const intervalo = Math.max(coleta.intervaloMin || 10, (c && c.via === "telnet" && (coleta.intervaloTipo || {})[o.tipo]) || 0);
+    // Sem resposta: última coleta com erro ou parada há mais de 3 intervalos (o da OLT; Nokia por Telnet: 30 min)
+    const intervalo = Math.max(o.intervaloMin || coleta.intervaloMin || 10, (c && c.via === "telnet" && (coleta.intervaloTipo || {})[o.tipo]) || 0);
     const atrasada = c && agora - Date.parse(c.em) > 3 * intervalo * 60000;
     const ok = !!(c && c.ok && !atrasada);
     const off = ok ? c.onus - c.online : 0;
@@ -274,7 +277,7 @@ async function loadOltsPainel() {
     <div class="card-head"><h2>OLTs <span class="olt-cnt ${online < linhas.length ? "bad" : ""}">${online}/${linhas.length} online</span>
       ${nWarn ? `<span class="badge warn" title="OLTs com 10% ou mais das ONUs offline ou temperatura perto do limite">${ICONS.faults}${nWarn}</span>` : ""}
       ${nBad ? `<span class="badge bad" title="OLT sem resposta, com 25% ou mais das ONUs offline ou temperatura no limite de alarme">${ICONS.faults}${nBad}</span>` : ""}</h2>
-      <span class="muted">${totOn}/${totOnus} ONUs online · <a href="#/olts">gerenciar ›</a></span></div>
+      <span class="muted">${totOn}/${totOnus} ONUs online${desligadas ? ` · ${desligadas} com consulta desligada` : ""} · <a href="#/olts">gerenciar ›</a></span></div>
     <div class="olt-list">${linhas.map((x) => `<a class="olt-row ${x.nivel === "bad" || x.tempNivel === "bad" ? "bad" : x.nivel === "warn" || x.tempNivel === "warn" ? "warn" : "good"}" href="#/olts" title="${esc(x.o.tipoNome)} · ${esc(x.o.ip)}${x.c ? ` · lida ${timeAgo(x.c.em)}` : ""}">
       <span class="olt-ico">${OLT_ICON}</span><span class="olt-nome">${esc(x.nome)}</span><span class="olt-det">${detalhe(x)}</span></a>`).join("")}</div>
   </div>`;
@@ -1562,7 +1565,8 @@ async function restoreDialog(b) {
 
 // ---------- OLTs: cadastro e teste de conexão ----------
 async function pageOlts() {
-  const { olts, tipos, coleta } = await api("/olts");
+  const { olts, tipos, coleta, intervalos, rxTelnetTipos } = await api("/olts");
+  const extra = { intervalos, rxTelnetTipos };
   const col = (id) => {
     const c = ((coleta || {}).coletas || {})[id];
     if (!c) return `<span class="muted">ainda não lida</span>`;
@@ -1583,23 +1587,36 @@ async function pageOlts() {
     <div class="card" style="margin-bottom:16px"><p style="margin:0">As OLTs cadastradas aqui serão lidas pelo portal (SNMP e Telnet, só leitura) para trazer os alarmes de
       <b>dying gasp</b> (falta de energia na ONU) e <b>LOS</b> (perda de fibra). Senha e community ficam criptografadas no servidor e não aparecem na tela.</p></div>
     <div class="card">${olts.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (coleta a cada ${(coleta || {}).intervaloMin || 10} min; ZTE e Nokia por SNMP com Telnet de reserva, V-SOL por Telnet, FiberHome e Huawei só por SNMP)</th><th></th></tr></thead>
-      <tbody>${olts.map((o) => `<tr>
-        <td><b>${esc(o.descricao)}</b></td><td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
+      <thead><tr><th>OLT</th><th>Tipo</th><th>IP</th><th>SNMP</th><th>Telnet</th><th>Último teste</th><th>ONUs (ZTE e Nokia por SNMP com Telnet de reserva, V-SOL por Telnet, FiberHome, Huawei e Cianet por SNMP)</th><th></th></tr></thead>
+      <tbody>${olts.map((o) => `<tr class="${o.ativo ? "" : "olt-desligada"}">
+        <td><b>${esc(o.descricao)}</b>
+          <div style="margin-top:4px">${o.ativo ? `<span class="badge good">consulta ativa</span>` : `<span class="badge">consulta desligada</span>`}</div>
+          <div class="muted" style="font-size:11.5px;margin-top:2px">a cada ${o.intervaloMin} min${(rxTelnetTipos || []).includes(o.tipo) ? ` · RX pelo Telnet ${o.rxTelnet ? "ligado" : "desligado"}` : ""}</div></td>
+        <td>${esc(o.tipoNome)}</td><td><code>${esc(o.ip)}</code></td>
         <td>v${esc(o.snmpVersao)} · porta ${o.snmpPorta}<br><span class="muted">${o.temCommunity ? "community ••••••" : "sem community"}</span></td>
         <td>${esc(o.protocolo === "ssh" ? "SSH" : "Telnet")} · porta ${o.telnetPorta}<br><span class="muted">${esc(o.usuario || "sem usuário")} ${o.temSenha ? "· senha ••••••" : "· sem senha"}${o.temSenhaAdmin ? " · admin ••••••" : ""}</span></td>
         <td>${teste(o.ultimoTeste)}</td>
-        <td>${col(o.id)}</td>
-        <td style="white-space:nowrap"><button class="btn sm" data-olt-testar="${esc(o.id)}">Testar</button>
+        <td>${o.ativo ? col(o.id) : `<span class="muted">não é lida enquanto a consulta estiver desligada</span>`}</td>
+        <td style="white-space:nowrap"><button class="btn sm" data-olt-ativo="${esc(o.id)}">${o.ativo ? "Desligar" : "Ligar"}</button>
+          <button class="btn sm" data-olt-testar="${esc(o.id)}">Testar</button>
           <button class="btn sm" data-olt-editar="${esc(o.id)}">Editar</button>
           <button class="btn sm danger" data-olt-apagar="${esc(o.id)}">Apagar</button></td></tr>`).join("")}</tbody>
     </table></div>` : `<div class="empty">Nenhuma OLT cadastrada.</div>`}</div>`;
 
-  $("#olt-nova").addEventListener("click", () => oltForm(null, tipos));
+  $("#olt-nova").addEventListener("click", () => oltForm(null, tipos, extra));
   $("#olt-coletar").addEventListener("click", async () => {
     try { await api("/olts/coletar", { method: "POST", loading: "Lendo as ONUs nas OLTs (pode levar até 1 min)…" }); toast("Leitura concluída."); route(true); } catch (e) { toast(e.message, true); }
   });
-  view.querySelectorAll("[data-olt-editar]").forEach((b) => b.addEventListener("click", () => oltForm(olts.find((o) => o.id === b.dataset.oltEditar), tipos)));
+  view.querySelectorAll("[data-olt-editar]").forEach((b) => b.addEventListener("click", () => oltForm(olts.find((o) => o.id === b.dataset.oltEditar), tipos, extra)));
+  view.querySelectorAll("[data-olt-ativo]").forEach((b) => b.addEventListener("click", async () => {
+    const o = olts.find((x) => x.id === b.dataset.oltAtivo);
+    if (o.ativo && !confirm(`Desligar a consulta da OLT ${o.descricao}?\n\nO portal para de ler esta OLT (ONUs, sinal e quedas) até ser ligada de novo. Nada muda na OLT.`)) return;
+    try {
+      await api(`/olts/${enc(o.id)}/ativo`, { method: "POST", body: { ativo: !o.ativo }, loading: o.ativo ? "Desligando…" : "Ligando…" });
+      toast(o.ativo ? `Consulta da OLT ${o.descricao} desligada.` : `Consulta da OLT ${o.descricao} ligada: lida na próxima coleta (até 1 min).`);
+      route(true);
+    } catch (e) { toast(e.message, true); }
+  }));
   view.querySelectorAll("[data-olt-testar]").forEach((b) => b.addEventListener("click", async () => {
     try {
       const r = await api(`/olts/${enc(b.dataset.oltTestar)}/testar`, { method: "POST", loading: "Testando SNMP e Telnet na OLT…" });
@@ -1614,7 +1631,7 @@ async function pageOlts() {
   }));
 }
 
-function oltForm(o, tipos) {
+function oltForm(o, tipos, extra = {}) {
   const dlg = document.createElement("dialog");
   dlg.className = "fw-dialog";
   const v = (k, d = "") => esc(o && o[k] != null ? o[k] : d);
@@ -1638,14 +1655,38 @@ function oltForm(o, tipos) {
       <label>SNMP porta<input name="snmpPorta" type="number" min="1" max="65535" value="${v("snmpPorta", 161)}"></label>
     </div>
     <label>SNMP community<input name="community" type="password" autocomplete="new-password" placeholder="${o && o.temCommunity ? "•••••• (vazio = manter)" : ""}"></label>
+    <div class="olt-consulta">
+      <b>Consulta</b>
+      <label class="olt-chk"><input type="checkbox" name="ativo" ${!o || o.ativo !== false ? "checked" : ""}> Consulta ativa <span class="muted">(desligada, o portal não lê esta OLT)</span></label>
+      <label>Coleta a cada<select name="intervaloMin">${(extra.intervalos || [5, 10, 20]).map((m) => `<option value="${m}" ${(o ? o.intervaloMin || 10 : 10) === m ? "selected" : ""}>${m} min${m === 10 ? " (padrão)" : ""}</option>`).join("")}</select></label>
+      <label class="olt-chk" id="olt-rxtelnet"><input type="checkbox" name="rxTelnet" ${o ? (o.rxTelnet ? "checked" : "") : ""}> Ler o RX das ONUs pelo Telnet
+        <span class="muted" id="olt-rxtelnet-dica"></span></label>
+    </div>
     <p class="muted" style="font-size:12.5px;margin:4px 0 0">Prefira um usuário <b>só de leitura</b> na OLT. Senha e community são guardadas criptografadas e não voltam para a tela.
-      FiberHome e Huawei são lidas só por SNMP (community obrigatória); ZTE C220 usa SNMP com Telnet de reserva.</p>
+      FiberHome, Huawei e Cianet são lidas por SNMP (community obrigatória); ZTE C220 usa SNMP com Telnet de reserva.</p>
     <div class="fw-actions"><button class="btn" value="cancel" type="submit">Cancelar</button><button class="btn primary" value="ok" type="submit">Salvar</button></div>
   </form>`;
   document.body.appendChild(dlg);
+  // "RX pelo Telnet" só aparece nos tipos em que o portal sabe ler o RX pela CLI
+  const RX_DICA = { vsol: "(show onu opm-diag em cada PON; é a única fonte de RX da V-SOL)",
+    fh_an5516: "(show optic_module, só das ONUs ligadas a aparelhos e só quando o SNMP não trouxer o RX)" };
+  const selTipo = dlg.querySelector('[name="tipo"]'), boxRx = dlg.querySelector("#olt-rxtelnet");
+  const ajustaRx = (mudouTipo) => {
+    const t = selTipo.value, tem = (extra.rxTelnetTipos || ["vsol", "fh_an5516"]).includes(t);
+    boxRx.hidden = !tem;
+    dlg.querySelector("#olt-rxtelnet-dica").textContent = RX_DICA[t] || "";
+    // Cadastro novo ou troca de tipo: V-SOL vem com o RX ligado (como sempre foi), FiberHome desligado
+    if (mudouTipo || !o) boxRx.querySelector("input").checked = t === "vsol";
+  };
+  selTipo.addEventListener("change", () => ajustaRx(true));
+  ajustaRx(false);
   dlg.addEventListener("close", async () => {
     const ok = dlg.returnValue === "ok";
-    const body = Object.fromEntries(new FormData(dlg.querySelector("form")));
+    const f = dlg.querySelector("form");
+    const body = Object.fromEntries(new FormData(f));
+    // Caixas de marcar vão sempre (desmarcada não aparece no FormData)
+    body.ativo = f.ativo.checked;
+    body.rxTelnet = !boxRx.hidden && f.rxTelnet.checked;
     dlg.remove();
     if (!ok) return;
     if (o) body.id = o.id;

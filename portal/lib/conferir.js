@@ -144,10 +144,10 @@ async function integracoes(out) {
   } else out.push({ grupo: g, nome: "Backup do ACS", nivel: "info", detalhe: "não configurado no portal", dica: "" });
   if (!process.env.WIFI_BACKUP_ALLOW) out.push({ grupo: g, nome: "IP do ACS liberado (WIFI_BACKUP_ALLOW)", nivel: "warn", detalhe: "não definido no .env",
     dica: "Sem ele, o ACS não busca a cópia do Wi-Fi nem avisa as atualizações: WIFI_BACKUP_ALLOW=<IP do ACS> no .env do portal." });
-  const lista = olts.listar();
+  const lista = olts.listar().filter((o) => o.ativo); // consulta desligada não conta
   if (lista.length) {
     const r = oltcoleta.resumo();
-    const ruins = lista.filter((o) => { const c = r.coletas[o.id]; return !c || !c.ok || idade(c.em) > Math.max(30, (r.intervaloTipo[o.tipo] || r.intervaloMin) * 3); });
+    const ruins = lista.filter((o) => { const c = r.coletas[o.id]; return !c || !c.ok || idade(c.em) > Math.max(30, (r.intervaloTipo[o.tipo] || o.intervaloMin || r.intervaloMin) * 3); });
     out.push({ grupo: g, nome: "Coleta das OLTs", nivel: ruins.length ? "warn" : "ok",
       detalhe: ruins.length ? `${ruins.length} de ${lista.length} sem leitura recente: ${ruins.map((o) => o.descricao).join(", ")}` : `${lista.length} OLT(s) lidas, ${r.onus} ONUs`,
       dica: ruins.length ? "Veja o erro de cada uma na página OLTs (botão Testar)." : "" });

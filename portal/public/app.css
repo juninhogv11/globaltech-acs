@@ -507,3 +507,10 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .conf-ic.ok { background: var(--good); } .conf-ic.warn { background: var(--warn); } .conf-ic.bad { background: var(--bad); } .conf-ic.info { background: var(--muted); }
 .atu-auto { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 700px) { .conf-item { grid-template-columns: 22px 1fr; } .conf-item .dica, .conf-item > span:last-of-type { grid-column: 2; } }
+
+/* Cadastro de OLT: bloco "Consulta" (ligada/desligada, intervalo, RX pelo Telnet) */
+.olt-consulta { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.olt-form .olt-chk { flex-direction: row; align-items: center; gap: 8px; }
+.olt-form .olt-chk input { width: auto; }
+.olt-form .olt-chk[hidden] { display: none; }
+tr.olt-desligada td { opacity: .6; }

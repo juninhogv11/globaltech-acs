@@ -87,7 +87,8 @@ async function coletarVsol(o, vinc = new Set()) {
   }
   const cmds = ["configure terminal"];
   for (const p of portas) {
-    cmds.push(`interface epon ${p}`, "show onu status", "show onu opm-diag");
+    // RX das ONUs pelo Telnet: opção da OLT (ligada por padrão na V-SOL, como sempre foi)
+    cmds.push(`interface epon ${p}`, "show onu status", ...(o.rxTelnet !== false ? ["show onu opm-diag"] : []));
     // tráfego: só das ONUs ligadas a aparelhos do ACS (1 comando por ONU)
     const pre = `${o.id}|${p}:`;
     for (const k of vinc) if (k.startsWith(pre) && /^\d+$/.test(k.slice(pre.length))) cmds.push(`show onu ${k.slice(pre.length)} statistics`);
@@ -712,8 +713,22 @@ let rodando = false;
 // forcar = true (botão "Ler ONUs agora"): lê todas, sem esperar o intervalo próprio de cada tipo
 async function coletar(forcar = false) {
   if (rodando) return;
-  rodando = true;
   load();
+  // Cada OLT tem o seu intervalo (5, 10 ou 20 min) e pode estar com a consulta desligada; o relógio passa a cada minuto
+  // e só lê as que estão na hora (o "Ler ONUs agora" lê todas as ligadas)
+  const naHora = olts.listar().filter((o) => {
+    if (!o.ativo) return false;
+    if (forcar) return true;
+    const ult = db.coletas[o.id];
+    if (!ult || !ult.em) return true;
+    const desde = Date.now() - Date.parse(ult.em);
+    // O intervalo maior da Nokia vale só para o Telnet (lento); por SNMP ela segue o intervalo da OLT
+    const minTipo = INTERVALO_TIPO[o.tipo];
+    if (minTipo && ult.ok && ult.via !== "snmp" && desde < (minTipo - 1) * 60000) return false;
+    return desde >= o.intervaloMin * 60000 - 30000;
+  });
+  if (!naHora.length) return;
+  rodando = true;
   loadS();
   const agora = new Date().toISOString();
   // ONUs ligadas a aparelhos do ACS (as únicas que ganham gráfico de sinal/tráfego)
@@ -725,11 +740,7 @@ async function coletar(forcar = false) {
     catch (e) { console.error("coleta OLT: lista de aparelhos:", e.message); }
   }
   try {
-    for (const o of olts.listar()) {
-      const ult = db.coletas[o.id];
-      const minTipo = INTERVALO_TIPO[o.tipo];
-      // O intervalo maior da Nokia vale só para o Telnet (lento); por SNMP ela é lida junto com as outras
-      if (!forcar && minTipo && ult && ult.ok && ult.via !== "snmp" && Date.now() - Date.parse(ult.em) < (minTipo - 1) * 60000) continue;
+    for (const o of naHora) {
       const c = { em: agora, ok: false };
       try {
         let onus, extra = {};
@@ -754,6 +765,8 @@ async function coletar(forcar = false) {
           extra.via = "telnet";
         }
         if (extra.via === "snmp") { try { await medirSnmp(o, onus, vinc); } catch (e) { extra.medidaErro = e.message; } }
+        // RX pelo Telnet (opção da OLT): FiberHome, só das ONUs ligadas a aparelhos que ficaram sem RX pelo SNMP
+        if (o.rxTelnet && o.tipo === "fh_an5516") { try { extra.rxTelnet = await rxTelnetFh(o, onus, vinc); } catch (e) { extra.rxTelnetErro = e.message; } }
         // Tempo ligada (para o quadro do dashboard). V-SOL fica de fora: o agente SNMP dela trava.
         if (extra.via === "snmp") { const s = await tempoLigada(o); if (s != null) extra.ligadoSeg = s; }
         extra.segundos = Math.round((Date.now() - t0) / 100) / 10;
@@ -801,6 +814,25 @@ async function coletar(forcar = false) {
     saveS();
     registrarTotais(agora);
   } finally { rodando = false; }
+}
+
+// FiberHome AN5516 pelo Telnet: "cd gpononu" → "show optic_module slot S link P onu N" (campo "RECV POWER", dBm).
+// Comando conferido numa AN5516 real em 25/11/2026 (mesmo valor do SNMP); o texto exato da saída ainda a conferir.
+// Máximo de 40 ONUs por leitura (1 comando por ONU) para não segurar a sessão da OLT.
+async function rxTelnetFh(o, onus, vinc) {
+  const alvo = onus.filter((x) => x.online && vinc.has(`${o.id}|${x.index}`) && !(x.medida && x.medida.rx != null)).slice(0, 40);
+  if (!alvo.length) return 0;
+  const cmd = (x) => { const m = x.index.match(/^(\d+)\/(\d+):(\d+)$/); return m ? `show optic_module slot ${m[1]} link ${m[2]} onu ${m[3]}` : null; };
+  const comAlvo = alvo.filter(cmd);
+  const r = await olts.lerComandos(o.id, ["cd gpononu", ...comAlvo.map(cmd)]);
+  let n = 0;
+  comAlvo.forEach((x, i) => {
+    const s = (r.saidas[i + 1] || {}).saida || "";
+    const m = s.match(/RECV\s*POWER[^-\d]*(-?\d+(?:\.\d+)?)/i);
+    const rx = m ? Number(m[1]) : NaN;
+    if (Number.isFinite(rx) && rx > -50 && rx < 10) { x.medida = { ...(x.medida || {}), rx, lado: "onu" }; n++; }
+  });
+  return n;
 }
 
 // ---------- Ligação ONU <-> aparelho do ACS ----------
@@ -889,7 +921,8 @@ function serieDoAparelho(device, horas = 24) {
   const temTrafego = COM_TRAFEGO.has(onu.oltTipo);
   return {
     onu: { olt: onu.oltNome, tipo: onu.oltTipo, tipoNome: olts.TIPOS[onu.oltTipo] || onu.oltTipo, index: onu.index, online: onu.online, causa: onu.causa, visto: onu.visto },
-    lado: s.lado || (["zte", "nokia"].includes(onu.oltTipo) ? "olt" : "onu"), temTrafego, intervaloMin: INTERVALO_MIN,
+    lado: s.lado || (["zte", "nokia"].includes(onu.oltTipo) ? "olt" : "onu"), temTrafego,
+    intervaloMin: (olts.listar().find((o) => o.id === onu.olt) || {}).intervaloMin || INTERVALO_MIN,
     pontos: s.pts.filter((p) => p[0] >= desde).map(([t, rx, down, up, st]) => ({ t, rx, down, up, st })),
   };
 }
@@ -898,7 +931,8 @@ function serieDoAparelho(device, horas = 24) {
 function iniciar(listarAparelhos) {
   aparelhosFn = listarAparelhos || null;
   setTimeout(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), 20000);
-  setInterval(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), INTERVALO_MIN * 60000).unref();
+  // A cada minuto: cada OLT é lida quando passa o intervalo dela (5, 10 ou 20 min)
+  setInterval(() => coletar().catch((e) => console.error("coleta OLT:", e.message)), 60000).unref();
 }
 
 module.exports = { coletar, onuDoAparelho, acharOnu, confirmarEventos, resumo, iniciar, causaDe, serieDoAparelho, totais };

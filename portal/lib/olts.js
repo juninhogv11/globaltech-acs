@@ -56,9 +56,19 @@ function save(list) {
   fs.renameSync(FILE + ".tmp", FILE);
 }
 // Versão para o navegador: sem segredos, só se estão preenchidos
+// Opções de coleta por OLT (cadastro antigo sem os campos = padrão: ativa, 10 min, RX pelo Telnet como era antes)
+const INTERVALOS = [5, 10, 20];
+// Quem tem leitura do RX da ONU pelo Telnet: V-SOL (show onu opm-diag; sempre foi assim) e FiberHome AN5516
+// (show optic_module, só das ONUs ligadas a aparelhos do ACS e só quando o SNMP não trouxe o RX)
+const RX_TELNET = { vsol: true, fh_an5516: false };
+const opcoes = (o) => ({
+  ativo: o.ativo !== false,
+  intervaloMin: INTERVALOS.includes(Number(o.intervaloMin)) ? Number(o.intervaloMin) : 10,
+  rxTelnet: o.tipo in RX_TELNET ? (typeof o.rxTelnet === "boolean" ? o.rxTelnet : RX_TELNET[o.tipo]) : false,
+});
 const publica = (o) => {
   const { senha, community, senhaAdmin, ...resto } = o;
-  return { protocolo: "telnet", snmpVersao: "2c", ...resto, temSenha: !!senha, temCommunity: !!community, temSenhaAdmin: !!senhaAdmin, tipoNome: TIPOS[o.tipo] || o.tipo };
+  return { protocolo: "telnet", snmpVersao: "2c", ...resto, ...opcoes(o), temSenha: !!senha, temCommunity: !!community, temSenhaAdmin: !!senhaAdmin, tipoNome: TIPOS[o.tipo] || o.tipo };
 };
 const versaoSnmp = (o) => (o.snmpVersao === "1" ? 0 : 1);
 
@@ -84,6 +94,12 @@ function salvar(dados, usuarioPortal) {
     usuario: String(dados.usuario || "").trim().slice(0, 64),
     protocolo: dados.protocolo === "ssh" ? "ssh" : "telnet",
     snmpVersao: dados.snmpVersao === "1" ? "1" : "2c",
+    // Checkbox do formulário: "on"/true = marcado; ausente = desmarcado (o formulário sempre manda os campos)
+    ativo: dados.ativo === undefined ? o.ativo !== false : dados.ativo === true || dados.ativo === "on",
+    intervaloMin: INTERVALOS.includes(Number(dados.intervaloMin)) ? Number(dados.intervaloMin) : opcoes(o).intervaloMin,
+    rxTelnet: !(dados.tipo in RX_TELNET) ? false
+      : dados.rxTelnet === undefined ? (typeof o.rxTelnet === "boolean" ? o.rxTelnet : RX_TELNET[dados.tipo])
+      : dados.rxTelnet === true || dados.rxTelnet === "on",
     alterado: new Date().toISOString(),
     alteradoPor: usuarioPortal,
   });
@@ -91,6 +107,16 @@ function salvar(dados, usuarioPortal) {
   if (dados.senha) o.senha = cifrar(dados.senha);
   if (dados.community) o.community = cifrar(dados.community);
   if (dados.senhaAdmin) o.senhaAdmin = cifrar(dados.senhaAdmin);
+  save(list);
+  return publica(o);
+}
+
+// Liga/desliga a consulta da OLT (botão da lista, sem abrir o formulário)
+function ativar(id, ativo, usuarioPortal) {
+  const list = load();
+  const o = list.find((x) => x.id === id);
+  if (!o) throw bad("OLT não encontrada.", 404);
+  Object.assign(o, { ativo: !!ativo, alterado: new Date().toISOString(), alteradoPor: usuarioPortal });
   save(list);
   return publica(o);
 }
@@ -153,7 +179,7 @@ async function testar(id) {
 }
 
 // Comandos SOMENTE de leitura (para levantar o formato das saídas de cada fabricante)
-const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|config|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+|scroll( \d+)?)$/i; // "cd": CLI FiberHome AN5516; "scroll": paginação Huawei
+const LEITURA_RE = /^(show|display|info)\b[^;|&`$]*$|^(enable|en|exit|end|quit|terminal length \d+|screen-length \d+( temporary)?|configure terminal|conf t|config|interface (gpon|epon) \S+|environment inhibit-alarms|cd [\w.]+|list|scroll( \d+)?)$/i; // "cd"/"list": CLI FiberHome AN5516 (list = comandos da pasta); "scroll": paginação Huawei
 async function lerComandos(id, comandos) {
   const o = buscar(id);
   const lista = (Array.isArray(comandos) ? comandos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 40);
@@ -199,4 +225,4 @@ async function snmpGetLote(id, oids) {
   });
 }
 
-module.exports = { TIPOS, ehHuawei, listar, salvar, remover, testar, lerComandos, snmpWalk, snmpColunas, snmpGetLote };
+module.exports = { TIPOS, INTERVALOS, RX_TELNET, ehHuawei, ativar, listar, salvar, remover, testar, lerComandos, snmpWalk, snmpColunas, snmpGetLote };

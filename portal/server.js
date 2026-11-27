@@ -477,11 +477,19 @@ api.delete("/api/faults/:id", async (req, res) => {
 // ---------- OLTs (cadastro; senha e community criptografadas e nunca devolvidas) ----------
 // Totais de clientes (ONUs) de todas as OLTs ao longo do tempo (gráfico do dashboard)
 api.get("/api/olts/totais", async (req, res) => res.json(oltcoleta.totais(new URL(req.url, "http://x").searchParams.get("horas"))));
-api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS, coleta: oltcoleta.resumo() }));
+api.get("/api/olts", async (req, res) => res.json({ olts: olts.listar(), tipos: olts.TIPOS, coleta: oltcoleta.resumo(),
+  intervalos: olts.INTERVALOS, rxTelnetTipos: Object.keys(olts.RX_TELNET) }));
 
 api.post("/api/olts", async (req, res) => {
   const r = olts.salvar(req.body || {}, req.user.user);
   console.log(new Date().toISOString(), `OLT ${r.descricao} (${r.ip}) salva por ${req.user.user}`);
+  res.json(r);
+});
+
+// Liga/desliga a consulta de uma OLT (botão da lista)
+api.post("/api/olts/:id/ativo", async (req, res) => {
+  const r = olts.ativar(req.params.id, !!(req.body || {}).ativo, req.user.user);
+  console.log(new Date().toISOString(), `OLT ${r.descricao} (${r.ip}): consulta ${r.ativo ? "ligada" : "desligada"} por ${req.user.user}`);
   res.json(r);
 });
 

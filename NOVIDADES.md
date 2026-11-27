@@ -4,6 +4,17 @@ O que muda em cada versão, em português simples. A página **Atualizações** 
 versão mais nova que a instalada. Cada versão começa com uma linha `## vAAAA.MM.DD — título` (ou `vAAAA.MM.DD-2`
 para a segunda versão do mesmo dia). Itens que exigem algo do provedor começam com **Atenção:**.
 
+## v2026.11.27 — Opções de consulta por OLT
+
+- No cadastro de cada OLT, novo bloco **Consulta**:
+  - **Consulta ativa** (ligar/desligar): desligada, o portal não lê a OLT (útil em manutenção ou OLT fora da rede).
+    Também há o botão **Ligar/Desligar** na lista de OLTs. OLT desligada sai do painel do Dashboard e da conferência.
+  - **Coleta a cada** 5, 10 (padrão) ou 20 minutos.
+  - **Ler o RX das ONUs pelo Telnet** (V-SOL e FiberHome AN5516): na V-SOL vem ligado, como sempre foi (é a única fonte de
+    RX dela); na FiberHome vem desligado e, ligado, lê pela CLI (`show optic_module`) o RX das ONUs ligadas a aparelhos
+    quando o SNMP não trouxer.
+- OLTs já cadastradas continuam como estavam: ativas, a cada 10 minutos.
+
 ## v2026.11.26-5 — Sinal das ONUs EPON pelo ACS
 
 - O medidor "ONU Rx" da página do aparelho passa a ler também o sinal das ONUs **EPON** padrão China Telecom (além das
